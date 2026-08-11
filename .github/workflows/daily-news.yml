@@ -1,0 +1,86 @@
+name: Codzienny przegląd wiadomości
+
+on:
+  schedule:
+    # Cron w GitHub Actions chodzi WYŁĄCZNIE w UTC i nie zna stref czasowych,
+    # więc "8:05 czasu polskiego" wymaga dwóch wpisów. Oba odpalają się przez
+    # cały rok, ale skrypt sam sprawdza porę i ten "nie swój" kończy bez pracy
+    # (patrz krok "Sprawdź porę dnia" niżej).
+    - cron: "5 6 * * *"   # 8:05 czasu letniego (CEST, UTC+2)
+    - cron: "5 7 * * *"   # 8:05 czasu zimowego (CET,  UTC+1)
+  workflow_dispatch:      # przycisk "Run workflow" do testów ręcznych
+
+# Bez tego wbudowany GITHUB_TOKEN jest tylko do odczytu i push się nie uda.
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-news
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Pobierz repozytorium
+        uses: actions/checkout@v4
+
+      - name: Sprawdź porę dnia
+        id: pora
+        run: |
+          # Oba wpisy cron odpalają się codziennie, ale raport ma powstać raz.
+          # Liczy się lokalna godzina w Warszawie — po zmianie czasu właściwy
+          # okazuje się drugi wpis, bez ruszania pliku workflow.
+          GODZINA=$(TZ=Europe/Warsaw date +%H)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Uruchomienie ręczne — kontynuuję."
+            echo "uruchom=tak" >> "$GITHUB_OUTPUT"
+          elif [ "$GODZINA" = "08" ]; then
+            echo "W Warszawie jest 8:xx — to właściwy przebieg."
+            echo "uruchom=tak" >> "$GITHUB_OUTPUT"
+          else
+            echo "W Warszawie jest $GODZINA:xx — to przebieg z drugiego wpisu cron, pomijam."
+            echo "uruchom=nie" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ustaw Pythona
+        if: steps.pora.outputs.uruchom == 'tak'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Zainstaluj zależności
+        if: steps.pora.outputs.uruchom == 'tak'
+        run: pip install -r requirements.txt
+
+      - name: Sprawdź kanały RSS
+        if: steps.pora.outputs.uruchom == 'tak'
+        continue-on-error: true   # padnięty kanał to ostrzeżenie, nie powód do przerwania
+        run: python check_feeds.py
+
+      - name: Wygeneruj i opublikuj raport
+        if: steps.pora.outputs.uruchom == 'tak'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          REPO_DIR: ${{ github.workspace }}
+          SITE_SUBDIR: docs          # strona ląduje w docs/, kod zostaje w korzeniu
+          GITHUB_BRANCH: ${{ github.ref_name }}
+          NEWS_SOURCE: rss
+          ANTHROPIC_MODEL: claude-sonnet-5
+          ANTHROPIC_EFFORT: medium
+          ANTHROPIC_MAX_TOKENS: "40000"
+        run: |
+          git config user.name "Daily News Bot"
+          git config user.email "bot@users.noreply.github.com"
+          python generate_report.py
+
+      - name: Zachowaj log przy błędzie
+        if: failure() && steps.pora.outputs.uruchom == 'tak'
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-bledu
+          path: logs/
+          retention-days: 7
