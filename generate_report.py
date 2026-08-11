@@ -705,12 +705,33 @@ def publish_to_github(html_content: str):
     if IN_ACTIONS:
         # Uwierzytelnienie ustawił actions/checkout — token nigdy nie
         # przechodzi przez ten skrypt ani przez jego logi.
-        run(["git", "push", "origin", f"HEAD:{GITHUB_BRANCH}"], cwd=REPO_DIR)
+        push_cmd = ["git", "push", "origin", f"HEAD:{GITHUB_BRANCH}"]
     else:
         # Poza Actions budujemy URL z tokenem tylko na czas tego jednego
         # polecenia — nie zapisujemy go w .git/config.
         remote_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_OWNER}/{GITHUB_REPO}.git"
-        run(["git", "push", remote_url, f"HEAD:{GITHUB_BRANCH}"], cwd=REPO_DIR)
+        push_cmd = ["git", "push", remote_url, f"HEAD:{GITHUB_BRANCH}"]
+
+    # Push może zostać odrzucony (non-fast-forward), jeśli ktoś wypchnął coś
+    # do gałęzi między checkoutem tego przebiegu a tym momentem — np. ręczny
+    # commit użytkownika w trakcie działania harmonogramu. Nasz jedyny lokalny
+    # commit to plik index.html, więc rebase na świeży fetch prawie zawsze się
+    # powiedzie bez konfliktu; próbujemy dwa razy, zanim się poddamy.
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            run(push_cmd, cwd=REPO_DIR)
+            break
+        except RuntimeError:
+            if attempt == max_attempts:
+                raise
+            log.warning(
+                f"Push odrzucony (próba {attempt}/{max_attempts}) — "
+                "ktoś inny wypchnął zmiany w międzyczasie. Robię fetch + rebase i próbuję ponownie."
+            )
+            run(["git", "fetch", "origin", GITHUB_BRANCH], cwd=REPO_DIR)
+            run(["git", "rebase", f"origin/{GITHUB_BRANCH}"], cwd=REPO_DIR)
+
     log.info("Opublikowano na GitHub Pages.")
 
 
