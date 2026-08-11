@@ -345,7 +345,14 @@ w języku polskim.
 Dostajesz gotowy zestaw newsów wraz z treścią artykułów źródłowych. \
 Opisujesz WYŁĄCZNIE to, co jest w dostarczonych materiałach — nigdy nie \
 dodajesz faktów spoza nich i nigdy nie zmieniasz podanych adresów źródeł. \
-Jeśli materiał jest ubogi, piszesz krócej, zamiast zmyślać szczegóły."""
+Jeśli materiał jest ubogi, piszesz krócej, zamiast zmyślać szczegóły.
+
+Piszesz streszczenie własnymi słowami — relacjonujesz fakty, nie \
+przepisujesz sformułowań źródła. Dotyczy to szczególnie tytułu: zawsze \
+układasz go sam, jako zdanie opisujące istotę newsa. Nigdy nie kopiujesz \
+ani nie parafrazujesz blisko nagłówka z materiału źródłowego (`--- {źródło} | \
+{tytuł źródłowy}`) — ten tytuł to tylko informacja, o czym jest news, a nie \
+wzór do naśladowania czy skopiowania."""
 
 
 def build_write_prompt(buckets: dict[tuple[str, str], list]) -> str:
@@ -357,8 +364,10 @@ def build_write_prompt(buckets: dict[tuple[str, str], list]) -> str:
         f"- Nagłówek H1 z datą.\n"
         f"- Sekcje (H2) w kolejności: {', '.join(CATEGORIES)}.\n"
         "- W każdej sekcji podsekcje (H3): \"Polska\" i \"Świat\".\n"
-        "- Każdy news: pogrubiony tytuł (1 zdanie), potem opis 5-10 zdań, "
-        "a na końcu osobna linia z linkiem w formacie: `Źródło: <URL>`.\n"
+        "- Każdy news: pogrubiony tytuł (1 zdanie) NAPISANY PRZEZ CIEBIE — nigdy "
+        "nie kopiuj ani nie parafrazuj blisko nagłówka podanego przy materiale "
+        "źródłowym — a potem opis 5-10 zdań własnymi słowami i osobna linia "
+        "z linkiem w formacie: `Źródło: <URL>`.\n"
         "- Użyj DOKŁADNIE tych newsów i tych adresów źródeł, które podano "
         "niżej — nie dodawaj własnych, nie pomijaj żadnego, nie zmieniaj URL-i.\n"
         "- Pisz zwięźle, unikaj powtórzeń między newsami.\n"
@@ -452,6 +461,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Przegląd wiadomości — {date_human}</title>
 <meta name="description" content="Codzienny skrót najważniejszych wiadomości: Polska i Świat.">
+<meta name="robots" content="noindex, nofollow">
 <style>
   :root {{
     color-scheme: light dark;
@@ -581,7 +591,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 {content}
 </main>
 <footer>
-  Generowane automatycznie codziennie po 8:00. Treść może zawierać błędy — zawsze sprawdzaj źródła.
+  Generowane automatycznie codziennie po 8:00 przez model AI na podstawie
+  wskazanych źródeł. To streszczenie, nie oryginalna treść dziennikarska —
+  pełne artykuły znajdziesz pod linkami „🔗 Źródło” przy każdym newsie.
+  Treść może zawierać błędy — zawsze sprawdzaj źródła. Strona prywatna,
+  nieindeksowana przez wyszukiwarki.
 </footer>
 </body>
 </html>
@@ -684,6 +698,12 @@ def publish_to_github(html_content: str):
     index_path = SITE_DIR / "index.html"
     index_path.write_text(html_content, encoding="utf-8")
     log.info(f"Zapisano {index_path} ({len(html_content)} znaków).")
+
+    # Strona jest streszczeniem cudzych treści, nie ma być indeksowana ani
+    # znajdowana przez wyszukiwarki — <meta robots> w index.html to główna
+    # bariera, robots.txt to druga, niezależna warstwa tego samego zamiaru.
+    robots_path = SITE_DIR / "robots.txt"
+    robots_path.write_text("User-agent: *\nDisallow: /\n", encoding="utf-8")
 
     # W Actions jesteśmy już na właściwej gałęzi (detached/checkout robi to
     # za nas), a `git checkout` mogłoby porzucić stan roboczy.
