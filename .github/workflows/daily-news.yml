@@ -11,12 +11,12 @@ on:
     # opóźnienie z zapasem, celując w realne wykonanie ok. 8:30-10:30.
     # To szacunek na podstawie 2 dni obserwacji, nie gwarancja — jeśli po
     # tygodniu raport regularnie wychodzi poza 9-10, dostosuj tę godzinę.
+    #
+    # Celowo BEZ popołudniowego wpisu zapasowego: raport ma sens tylko rano
+    # (użytkownik czyta go przed/w trakcie dnia) — gdyby poranny przebieg
+    # zawiódł, popołudniowy "dogonienie" i tak nie spełniłoby celu. Lepiej
+    # poczekać do jutrzejszego porannego niż wygenerować raport po południu.
     - cron: "50 4 * * 1-5"
-    # Zapasowy wpis, wyraźnie później (popołudnie) — czysta siatka
-    # bezpieczeństwa na wypadek, gdyby poranny przebieg faktycznie zawiódł
-    # (nie tylko się opóźnił). Krok "Sprawdź, czy raport dziś już powstał"
-    # sprawia, że jeśli poranny się udał, ten nic nie robi.
-    - cron: "0 15 * * 1-5"
   workflow_dispatch:      # przycisk "Run workflow" do testów ręcznych, o dowolnej porze/dniu
 
 # Bez tego wbudowany GITHUB_TOKEN jest tylko do odczytu i push się nie uda.
