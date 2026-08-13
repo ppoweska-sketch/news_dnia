@@ -2,12 +2,15 @@ name: Codzienny przegląd wiadomości
 
 on:
   schedule:
-    # Cron w GitHub Actions chodzi WYŁĄCZNIE w UTC i nie zna stref czasowych,
-    # więc "8:05 czasu polskiego" wymaga dwóch wpisów. Oba odpalają się przez
-    # cały rok, ale skrypt sam sprawdza porę i ten "nie swój" kończy bez pracy
-    # (patrz krok "Sprawdź porę dnia" niżej).
-    - cron: "5 6 * * *"   # 8:05 czasu letniego (CEST, UTC+2)
-    - cron: "5 7 * * *"   # 8:05 czasu zimowego (CET,  UTC+1)
+    # UWAGA: GitHub Actions potrafi opóźniać zaplanowane uruchomienia o
+    # kilka godzin (zaobserwowane: 3,5-4,5h opóźnienia, konsekwentnie, na
+    # obu wpisach). Dlatego NIE pilnujemy tu dokładnej godziny w Warszawie —
+    # krok "Sprawdź, czy raport dziś już powstał" niżej działa inaczej: nie
+    # generuje drugi raz tego samego dnia, ale generuje o KAŻDEJ porze, jeśli
+    # dzisiejszego jeszcze nie ma. Dwa wpisy to tylko dwie szanse na dobę,
+    # żeby raport i tak wyszedł, nawet przy dużym opóźnieniu jednego z nich.
+    - cron: "5 6 * * *"
+    - cron: "5 15 * * *"
   workflow_dispatch:      # przycisk "Run workflow" do testów ręcznych
 
 # Bez tego wbudowany GITHUB_TOKEN jest tylko do odczytu i push się nie uda.
@@ -27,22 +30,32 @@ jobs:
       - name: Pobierz repozytorium
         uses: actions/checkout@v4
 
-      - name: Sprawdź porę dnia
+      - name: Sprawdź, czy raport dziś już powstał
         id: pora
         run: |
-          # Oba wpisy cron odpalają się codziennie, ale raport ma powstać raz.
-          # Liczy się lokalna godzina w Warszawie — po zmianie czasu właściwy
-          # okazuje się drugi wpis, bez ruszania pliku workflow.
-          GODZINA=$(TZ=Europe/Warsaw date +%H)
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Uruchomienie ręczne — kontynuuję."
-            echo "uruchom=tak" >> "$GITHUB_OUTPUT"
-          elif [ "$GODZINA" = "08" ]; then
-            echo "W Warszawie jest 8:xx — to właściwy przebieg."
-            echo "uruchom=tak" >> "$GITHUB_OUTPUT"
+          # Nie pilnujemy godziny (GitHub potrafi opóźniać cron o kilka
+          # godzin, patrz komentarz przy "on: schedule" wyżej) — pilnujemy
+          # tylko, żeby nie wygenerować dwa razy tego samego dnia. Datę
+          # ostatniego raportu czytamy z ostatniego commita do docs/index.html,
+          # licząc w czasie warszawskim (ten sam commit w UTC mógłby wypaść
+          # na wczoraj/dziś w zależności od pory).
+          DZIS=$(TZ=Europe/Warsaw date +%Y-%m-%d)
+          if [ -f docs/index.html ]; then
+            OSTATNI=$(TZ=Europe/Warsaw git log -1 --format=%cd --date=format-local:%Y-%m-%d -- docs/index.html)
           else
-            echo "W Warszawie jest $GODZINA:xx — to przebieg z drugiego wpisu cron, pomijam."
+            OSTATNI="(brak raportu)"
+          fi
+          echo "Dziś (Warszawa): $DZIS. Ostatni raport: $OSTATNI."
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Uruchomienie ręczne — generuję niezależnie od daty."
+            echo "uruchom=tak" >> "$GITHUB_OUTPUT"
+          elif [ "$OSTATNI" = "$DZIS" ]; then
+            echo "Dzisiejszy raport już istnieje — pomijam, żeby nie generować drugi raz."
             echo "uruchom=nie" >> "$GITHUB_OUTPUT"
+          else
+            echo "Brak dzisiejszego raportu — generuję."
+            echo "uruchom=tak" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Ustaw Pythona
