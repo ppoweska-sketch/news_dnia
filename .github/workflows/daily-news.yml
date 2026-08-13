@@ -2,16 +2,22 @@ name: Codzienny przegląd wiadomości
 
 on:
   schedule:
-    # UWAGA: GitHub Actions potrafi opóźniać zaplanowane uruchomienia o
-    # kilka godzin (zaobserwowane: 3,5-4,5h opóźnienia, konsekwentnie, na
-    # obu wpisach). Dlatego NIE pilnujemy tu dokładnej godziny w Warszawie —
-    # krok "Sprawdź, czy raport dziś już powstał" niżej działa inaczej: nie
-    # generuje drugi raz tego samego dnia, ale generuje o KAŻDEJ porze, jeśli
-    # dzisiejszego jeszcze nie ma. Dwa wpisy to tylko dwie szanse na dobę,
-    # żeby raport i tak wyszedł, nawet przy dużym opóźnieniu jednego z nich.
-    - cron: "5 6 * * *"
-    - cron: "5 15 * * *"
-  workflow_dispatch:      # przycisk "Run workflow" do testów ręcznych
+    # Cel: raport gotowy ok. 9:00-10:00 czasu warszawskiego, TYLKO dni robocze
+    # (pon-pt = "1-5" w polu dnia tygodnia crona).
+    #
+    # UWAGA: GitHub Actions potrafi opóźniać zaplanowane uruchomienia —
+    # zaobserwowane (11-13 sierpnia 2026): konsekwentnie 3,5-4,5h opóźnienia.
+    # Ten wpis (4:50 UTC = 6:50 latem/7:50 zimą w Warszawie) uwzględnia to
+    # opóźnienie z zapasem, celując w realne wykonanie ok. 8:30-10:30.
+    # To szacunek na podstawie 2 dni obserwacji, nie gwarancja — jeśli po
+    # tygodniu raport regularnie wychodzi poza 9-10, dostosuj tę godzinę.
+    - cron: "50 4 * * 1-5"
+    # Zapasowy wpis, wyraźnie później (popołudnie) — czysta siatka
+    # bezpieczeństwa na wypadek, gdyby poranny przebieg faktycznie zawiódł
+    # (nie tylko się opóźnił). Krok "Sprawdź, czy raport dziś już powstał"
+    # sprawia, że jeśli poranny się udał, ten nic nie robi.
+    - cron: "0 15 * * 1-5"
+  workflow_dispatch:      # przycisk "Run workflow" do testów ręcznych, o dowolnej porze/dniu
 
 # Bez tego wbudowany GITHUB_TOKEN jest tylko do odczytu i push się nie uda.
 permissions:
@@ -40,21 +46,29 @@ jobs:
           # licząc w czasie warszawskim (ten sam commit w UTC mógłby wypaść
           # na wczoraj/dziś w zależności od pory).
           DZIS=$(TZ=Europe/Warsaw date +%Y-%m-%d)
+          DZIEN_TYGODNIA=$(TZ=Europe/Warsaw date +%u)   # 1=poniedziałek ... 7=niedziela
           if [ -f docs/index.html ]; then
             OSTATNI=$(TZ=Europe/Warsaw git log -1 --format=%cd --date=format-local:%Y-%m-%d -- docs/index.html)
           else
             OSTATNI="(brak raportu)"
           fi
-          echo "Dziś (Warszawa): $DZIS. Ostatni raport: $OSTATNI."
+          echo "Dziś (Warszawa): $DZIS, dzień tygodnia: $DZIEN_TYGODNIA. Ostatni raport: $OSTATNI."
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Uruchomienie ręczne — generuję niezależnie od daty."
+            echo "Uruchomienie ręczne — generuję niezależnie od daty i dnia tygodnia."
             echo "uruchom=tak" >> "$GITHUB_OUTPUT"
+          elif [ "$DZIEN_TYGODNIA" -ge 6 ]; then
+            # Pole dnia tygodnia w cronie ("1-5") powinno to wykluczyć samo,
+            # ale przy wystarczająco dużym opóźnieniu piątkowy przebieg
+            # mógłby w teorii wykonać się już w sobotę — druga, niezależna
+            # warstwa tego samego zabezpieczenia.
+            echo "Weekend w Warszawie — pomijam (raport tylko w dni robocze)."
+            echo "uruchom=nie" >> "$GITHUB_OUTPUT"
           elif [ "$OSTATNI" = "$DZIS" ]; then
             echo "Dzisiejszy raport już istnieje — pomijam, żeby nie generować drugi raz."
             echo "uruchom=nie" >> "$GITHUB_OUTPUT"
           else
-            echo "Brak dzisiejszego raportu — generuję."
+            echo "Brak dzisiejszego raportu, dzień roboczy — generuję."
             echo "uruchom=tak" >> "$GITHUB_OUTPUT"
           fi
 
