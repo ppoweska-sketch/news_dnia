@@ -68,12 +68,15 @@ REPO_DIR = os.environ.get("REPO_DIR")  # lokalna ścieżka do sklonowanego repo 
 # gdy to się powtórzy, treść komunikatu błędu jest najszybszym źródłem.
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 MAX_TOKENS = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "16000"))
-# Budżet "myślenia" modelu w tokenach; 0 = wyłączone. Ten pipeline robi
-# klasyfikację i streszczanie z gotowych materiałów, nie złożone rozumowanie
-# — wyłączone myślenie jest tańsze i szybsze bez utraty jakości. Jeśli
-# GEMINI_THINKING_BUDGET jest puste, w ogóle nie wysyłamy tego parametru
-# (przydatne, gdyby wybrany model go nie obsługiwał).
-THINKING_BUDGET = os.environ.get("GEMINI_THINKING_BUDGET", "0")
+# Budżet "myślenia" modelu w tokenach. Domyślnie puste = w ogóle nie
+# wysyłamy tego parametru, model używa własnego domyślnego zachowania.
+# Kuszące byłoby wymusić 0 (zadanie to klasyfikacja/streszczanie, nie
+# złożone rozumowanie, więc myślenie i tak nic by nie dało) — ale
+# thinking_budget=0 na gemini-3.6-flash kończyło się 400 INVALID_ARGUMENT
+# (06.09.2026; SDK ma też pole thinking_level, więc kształt tego parametru
+# mógł się zmienić między generacjami modeli). Ustaw liczbę tylko po
+# sprawdzeniu w aktualnej dokumentacji, że wybrany model ją akceptuje.
+THINKING_BUDGET = os.environ.get("GEMINI_THINKING_BUDGET", "")
 
 # strftime nie zna polskich nazw miesięcy bez ustawionego locale, którego
 # nie ma gwarancji na świeżym serwerze — więc mapujemy je ręcznie.

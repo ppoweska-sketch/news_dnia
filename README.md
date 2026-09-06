@@ -208,10 +208,12 @@ Pokrętła w `env:` workflow-a (i w `.env` lokalnie):
 - `GEMINI_MAX_OUTPUT_TOKENS` — górny limit tekstu raportu. Za niski = raport
   urwany w połowie (skrypt to wykryje i przerwie, nie publikując niepełnej
   strony).
-- `GEMINI_THINKING_BUDGET` — domyślnie `0` (wyłączone myślenie). Zadanie to
-  klasyfikacja i streszczanie z gotowych materiałów, nie złożone
-  rozumowanie, więc wyłączone myślenie jest tańsze i szybsze bez utraty
-  jakości. Zostaw puste, jeśli wybrany model nie obsługuje tego parametru.
+- `GEMINI_THINKING_BUDGET` — domyślnie puste (parametr w ogóle nie jest
+  wysyłany, model używa własnego domyślnego zachowania). Próba wyłączenia
+  myślenia (`=0`) na `gemini-3.6-flash` kończyła się błędem `400
+  INVALID_ARGUMENT` (06.09.2026) — zanim ustawisz tu liczbę, sprawdź
+  w dokumentacji aktualnego modelu, czy akceptuje ten kształt parametru
+  (SDK ma też pole `thinking_level`, więc mogło się zmienić).
 - Liczba newsów na sekcję (`PER_BUCKET` w `generate_report.py`) — mniej
   newsów to mniej tokenów wejścia (krótsza treść artykułów) i wyjścia.
 

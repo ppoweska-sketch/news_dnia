@@ -97,7 +97,12 @@ jobs:
           GITHUB_BRANCH: ${{ github.ref_name }}
           GEMINI_MODEL: gemini-3.6-flash
           GEMINI_MAX_OUTPUT_TOKENS: "16000"
-          GEMINI_THINKING_BUDGET: "0"
+          # Puste = nie wysyłaj parametru wcale. gemini-3.6-flash zwracał
+          # 400 INVALID_ARGUMENT z thinking_budget=0 (06.09.2026) — SDK ma
+          # też pole thinking_level, więc nowsze modele mogły zmienić sposób
+          # sterowania myśleniem. Bezpieczniej nic nie wymuszać, niż zgadywać
+          # kształt parametru dla generacji modelu bez dokumentacji.
+          GEMINI_THINKING_BUDGET: ""
         run: |
           git config user.name "Daily News Bot"
           git config user.email "bot@users.noreply.github.com"
