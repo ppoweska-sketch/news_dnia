@@ -68,12 +68,15 @@ REPO_DIR = os.environ.get("REPO_DIR")  # lokalna ścieżka do sklonowanego repo 
 # 06.09.2026 — błąd 404 z API sam podał zamiennik (gemini-3.6-flash), więc
 # gdy to się powtórzy, treść komunikatu błędu jest najszybszym źródłem.
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
-# Przy 16000 model uciął raport po zaledwie 636 widocznych tokenach
-# (06.09.2026, thoughts_token_count niepomiernie duży) — bez wymuszonego
-# thinking_config model domyślnie zużywa część tego samego budżetu na
-# niewidoczne myślenie, więc limit musi mieć spory zapas ponad sam tekst
-# raportu (~6-8 tys. tokenów zmierzone wcześniej dla 50 newsów).
-MAX_TOKENS = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "40000"))
+# Bez wymuszonego thinking_config model domyślnie zużywa część TEGO SAMEGO
+# budżetu na niewidoczne myślenie — i to sporo, nieproporcjonalnie do
+# wejścia: zmierzone 06.09.2026, etap 2 (pisanie), ~45-50 tys. tokenów
+# wejścia -> myślenie=29320, tekst=10676, razem 39996/40000 (prawie limit).
+# Przy 16000 ucinało się po 636 widocznych tokenach. Etap 1 (klasyfikacja)
+# potrzebuje dużo mniej myślenia (~4-4,4 tys.) niż etap 2 (pisanie) — więc
+# to zależy od charakteru zadania, nie tylko rozmiaru wejścia. Ustawione
+# z dużym zapasem ponad zmierzone maksimum.
+MAX_TOKENS = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "65536"))
 # Budżet "myślenia" modelu w tokenach. Domyślnie puste = w ogóle nie
 # wysyłamy tego parametru, model używa własnego domyślnego zachowania.
 # Kuszące byłoby wymusić 0 (zadanie to klasyfikacja/streszczanie, nie

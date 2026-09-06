@@ -213,10 +213,12 @@ Pokrętła w `env:` workflow-a (i w `.env` lokalnie):
 - `GEMINI_MAX_OUTPUT_TOKENS` — górny limit tekstu raportu. Za niski = raport
   urwany w połowie (skrypt to wykryje i przerwie, nie publikując niepełnej
   strony). **Ten limit dzieli się z niewidocznym myśleniem modelu** (patrz
-  niżej) — musi mieć spory zapas ponad sam tekst raportu (~6-8 tys. tokenów
-  dla 50 newsów). Domyślnie `40000`; przy `16000` raport ucinał się po
-  zaledwie 636 widocznych tokenach (06.09.2026). Log pokazuje rozbicie
-  (`tokeny wy=... myślenie=...`), więc widać wprost, ile poszło gdzie.
+  niżej) i myślenie potrafi zjeść większość budżetu — zmierzone 06.09.2026:
+  myślenie=29320, tekst=10676 (razem 39996 z limitu 40000, prawie ucięte);
+  przy `16000` ucinało się po zaledwie 636 widocznych tokenach. Domyślnie
+  `65536`, z dużym zapasem ponad zmierzone maksimum. Log pokazuje rozbicie
+  (`tokeny wy=... myślenie=...`), więc widać wprost, ile poszło gdzie — jeśli
+  mimo `65536` znów będzie `MAX_TOKENS`, ten log powie, czy podnieść dalej.
 - `GEMINI_THINKING_BUDGET` — domyślnie puste (parametr w ogóle nie jest
   wysyłany, model używa własnego domyślnego zachowania — które, sądząc po
   logach, oznacza WŁĄCZONE myślenie zjadające część `GEMINI_MAX_OUTPUT_TOKENS`).
