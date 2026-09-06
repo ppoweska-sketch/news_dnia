@@ -95,7 +95,7 @@ jobs:
           REPO_DIR: ${{ github.workspace }}
           SITE_SUBDIR: docs          # strona ląduje w docs/, kod zostaje w korzeniu
           GITHUB_BRANCH: ${{ github.ref_name }}
-          GEMINI_MODEL: gemini-2.5-flash
+          GEMINI_MODEL: gemini-3.6-flash
           GEMINI_MAX_OUTPUT_TOKENS: "16000"
           GEMINI_THINKING_BUDGET: "0"
         run: |

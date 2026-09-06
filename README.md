@@ -195,7 +195,7 @@ kanał nie przerywa raportu) — wynik widać w logu kroku „Sprawdź kanały R
 
 ## 8. Koszty i limity
 
-Domyślny model to `gemini-2.5-flash` — rodzina Flash ma darmowy poziom
+Domyślny model to `gemini-3.6-flash` — rodzina Flash ma darmowy poziom
 (Pro jest płatne od kwietnia 2026). Dwa wywołania dziennie mieszczą się w
 nim z dużym zapasem; sprawdź aktualne limity na
 https://ai.google.dev/gemini-api/docs/rate-limits, bo się zmieniają.

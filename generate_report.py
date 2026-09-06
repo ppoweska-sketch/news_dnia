@@ -59,11 +59,14 @@ GITHUB_REPO = os.environ.get("GITHUB_REPO")
 GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
 REPO_DIR = os.environ.get("REPO_DIR")  # lokalna ścieżka do sklonowanego repo z Pages
 # Nazwy modeli Gemini zmieniają się regularnie — jeśli ta przestanie działać
-# (błąd "model not found"), sprawdź aktualną listę na
+# (błąd "model not found"/404), sprawdź aktualną listę na
 # https://ai.google.dev/gemini-api/docs/models i podmień tu albo w .env.
 # Model musi być z rodziny Flash/Flash-Lite, żeby łapać się na darmowy
 # poziom — modele Pro są płatne od kwietnia 2026.
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+# Precedens: gemini-2.5-flash przestał być dostępny dla nowych użytkowników
+# 06.09.2026 — błąd 404 z API sam podał zamiennik (gemini-3.6-flash), więc
+# gdy to się powtórzy, treść komunikatu błędu jest najszybszym źródłem.
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 MAX_TOKENS = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "16000"))
 # Budżet "myślenia" modelu w tokenach; 0 = wyłączone. Ten pipeline robi
 # klasyfikację i streszczanie z gotowych materiałów, nie złożone rozumowanie
