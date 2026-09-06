@@ -91,14 +91,13 @@ jobs:
       - name: Wygeneruj i opublikuj raport
         if: steps.pora.outputs.uruchom == 'tak'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           REPO_DIR: ${{ github.workspace }}
           SITE_SUBDIR: docs          # strona ląduje w docs/, kod zostaje w korzeniu
           GITHUB_BRANCH: ${{ github.ref_name }}
-          NEWS_SOURCE: rss
-          ANTHROPIC_MODEL: claude-sonnet-5
-          ANTHROPIC_EFFORT: medium
-          ANTHROPIC_MAX_TOKENS: "40000"
+          GEMINI_MODEL: gemini-2.5-flash
+          GEMINI_MAX_OUTPUT_TOKENS: "16000"
+          GEMINI_THINKING_BUDGET: "0"
         run: |
           git config user.name "Daily News Bot"
           git config user.email "bot@users.noreply.github.com"

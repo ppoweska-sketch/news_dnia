@@ -2,20 +2,18 @@
 """
 generate_report.py
 -------------------
-Codziennie (uruchamiane z timera systemd) generuje przegląd najważniejszych
+Codziennie (uruchamiane z GitHub Actions) generuje przegląd najważniejszych
 wiadomości (Polska/Świat x 5 kategorii x 5+5), renderuje mobile-first HTML
 i publikuje na GitHub Pages, nadpisując poprzednią wersję strony.
 
-Dwa tryby zbierania newsów, przełączane przez NEWS_SOURCE w .env:
+Zbieranie newsów: kanały RSS (rss_collect.py) zbierają ~900 kandydatów za
+darmo, dwuetapowo przez Gemini API — etap 1 wybiera z nich 50, etap 2 pisze
+raport z pełnych treści artykułów. Linki źródłowe pochodzą z RSS-a, więc nie
+da się ich zmyślić.
 
-  rss (domyślny, tani)
-      Kanały RSS zbierają ~900 kandydatów za darmo, model wybiera z nich 50
-      i pisze raport z pełnych treści artykułów. Linki źródłowe pochodzą
-      z RSS-a, więc nie da się ich zmyślić.
-
-  claude_search (drogi)
-      Model sam szuka przez narzędzie web_search. Szersze pokrycie tematów,
-      ale kilkadziesiąt wyszukiwań i wielokrotnie większe zużycie tokenów.
+Dostawca modelu: Google Gemini (nie Anthropic) — model Flash ma darmowy
+poziom wystarczający na dwa wywołania dziennie, więc codzienne uruchomienie
+nie generuje żadnych opłat. Patrz GEMINI_MODEL w .env.example.
 
 Wymaga pliku .env obok skryptu (patrz .env.example).
 """
@@ -30,7 +28,8 @@ from typing import Literal
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
-import anthropic
+from google import genai
+from google.genai import types
 import markdown as md
 
 # --------------------------------------------------------------------------
@@ -53,21 +52,25 @@ logging.basicConfig(
 )
 log = logging.getLogger("daily-news-report")
 
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 GITHUB_OWNER = os.environ.get("GITHUB_OWNER")
 GITHUB_REPO = os.environ.get("GITHUB_REPO")
 GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
 REPO_DIR = os.environ.get("REPO_DIR")  # lokalna ścieżka do sklonowanego repo z Pages
-NEWS_SOURCE = os.environ.get("NEWS_SOURCE", "rss").strip().lower()
-MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5")
-MAX_TOKENS = int(os.environ.get("ANTHROPIC_MAX_TOKENS", "40000"))
-EFFORT = os.environ.get("ANTHROPIC_EFFORT", "medium")
-MAX_SEARCHES = int(os.environ.get("ANTHROPIC_MAX_SEARCHES", "50"))
-# Ile razy wznowić turę, gdy serwerowa pętla web_search zgłosi "pause_turn"
-# (limit to ~10 wyszukiwań na jedno wywołanie, więc przy 50 wyszukiwaniach
-# model kilka razy zapauzuje i trzeba go wznowić).
-MAX_CONTINUATIONS = int(os.environ.get("ANTHROPIC_MAX_CONTINUATIONS", "10"))
+# Nazwy modeli Gemini zmieniają się regularnie — jeśli ta przestanie działać
+# (błąd "model not found"), sprawdź aktualną listę na
+# https://ai.google.dev/gemini-api/docs/models i podmień tu albo w .env.
+# Model musi być z rodziny Flash/Flash-Lite, żeby łapać się na darmowy
+# poziom — modele Pro są płatne od kwietnia 2026.
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+MAX_TOKENS = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "16000"))
+# Budżet "myślenia" modelu w tokenach; 0 = wyłączone. Ten pipeline robi
+# klasyfikację i streszczanie z gotowych materiałów, nie złożone rozumowanie
+# — wyłączone myślenie jest tańsze i szybsze bez utraty jakości. Jeśli
+# GEMINI_THINKING_BUDGET jest puste, w ogóle nie wysyłamy tego parametru
+# (przydatne, gdyby wybrany model go nie obsługiwał).
+THINKING_BUDGET = os.environ.get("GEMINI_THINKING_BUDGET", "0")
 
 # strftime nie zna polskich nazw miesięcy bez ustawionego locale, którego
 # nie ma gwarancji na świeżym serwerze — więc mapujemy je ręcznie.
@@ -94,7 +97,7 @@ MIN_PER_BUCKET = 3      # poniżej tego uznajemy raport za wybrakowany
 IN_ACTIONS = os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
 
 REQUIRED_VARS = {
-    "ANTHROPIC_API_KEY": ANTHROPIC_API_KEY,
+    "GEMINI_API_KEY": GEMINI_API_KEY,
     "REPO_DIR": REPO_DIR,
 }
 if not IN_ACTIONS:
@@ -116,124 +119,33 @@ SITE_DIR = REPO_DIR / os.environ.get("SITE_SUBDIR", "").strip("/") \
     if os.environ.get("SITE_SUBDIR", "").strip("/") else REPO_DIR
 
 # --------------------------------------------------------------------------
-# Prompt do Claude
+# Klient Gemini — mały wspólny helper na finish_reason (dwa etapy go używają)
 # --------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """Jesteś redaktorem tworzącym codzienny skrót newsów w stylu aplikacji \
-Infopiguła. Piszesz precyzyjnie, rzeczowo, bez lania wody, w języku polskim.
-Zawsze podajesz linki źródłowe. Nigdy nie wymyślasz faktów ani linków — jeśli \
-czegoś nie znalazłeś w wyszukiwaniu, pomijasz to.
-Zanim napiszesz odpowiedź, aktywnie i szeroko korzystasz z web_search, żeby \
-zebrać aktualne, dzisiejsze informacje z wielu różnych źródeł."""
+def _gemini_client() -> genai.Client:
+    return genai.Client(api_key=GEMINI_API_KEY)
 
-def build_user_prompt() -> str:
-    today = polish_date(datetime.now())
-    today_iso = datetime.now().strftime("%Y-%m-%d")
-    return f"""Dzisiejsza data to {today} ({today_iso}). Przygotuj przegląd \
-najważniejszych wiadomości na dziś w formacie Markdown.
 
-STRUKTURA (dokładnie taka, nic więcej):
-- Nagłówek H1 z datą.
-- 5 sekcji (H2), w tej kolejności: Ogólne wydarzenia, Polityka, Biznes i giełda, \
-Sport, Nauka.
-- W każdej sekcji dwie podsekcje (H3): "Polska" i "Świat".
-- W każdej podsekcji dokładnie 5 newsów (razem 50 newsów).
-- W sekcji "Biznes i giełda" pisz o wynikach spółek, decyzjach banków centralnych, \
-kursach indeksów (WIG20, S&P 500, Nasdaq), surowcach i walutach — podawaj konkretne \
-liczby i kierunek zmiany, a nie ogólniki.
-- Każdy news: pogrubiony tytuł (1 zdanie), potem opis 5-10 zdań, a na końcu \
-osobna linia z linkiem źródłowym w formacie: `Źródło: <URL>`.
-- Newsy muszą dotyczyć dzisiejszego dnia lub bieżących, trwających wydarzeń \
-(np. trwające misje, trwające turnieje) — bez wymyślonych informacji.
-- Szukaj aktywnie w wielu różnych zapytaniach (osobno dla Polski i świata, \
-osobno dla każdej kategorii), żeby zebrać wystarczająco dużo materiału.
-- Pisz zwięźle i rzeczowo, unikaj powtórzeń między newsami.
-- Nie dodawaj żadnego tekstu poza tą strukturą (bez wstępu, bez podsumowania \
-na końcu, bez cudzysłowów wokół cytatów dłuższych niż kilka słów)."""
+def _thinking_config() -> types.ThinkingConfig | None:
+    """None = nie wysyłaj parametru wcale (model użyje własnego domyślnego
+    zachowania) — przydatne, gdyby wybrany model nie obsługiwał tego pola."""
+    if THINKING_BUDGET == "":
+        return None
+    return types.ThinkingConfig(thinking_budget=int(THINKING_BUDGET))
+
+
+def _finish_reason_name(response) -> str:
+    """finish_reason bywa enumem albo stringiem zależnie od wersji SDK —
+    sprowadzamy do jednej postaci do porównań i logów."""
+    try:
+        reason = response.candidates[0].finish_reason
+    except (IndexError, AttributeError):
+        return "BRAK_KANDYDATA"
+    return getattr(reason, "name", str(reason))
 
 
 # --------------------------------------------------------------------------
-# Wywołanie Claude z web_search
-# --------------------------------------------------------------------------
-
-def generate_via_claude_search() -> str:
-    """Tryb `claude_search`: model sam szuka w sieci przez web_search."""
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-    messages = [{"role": "user", "content": build_user_prompt()}]
-    text_parts: list[str] = []
-    search_calls = 0
-
-    log.info(f"Wysyłam zapytanie do modelu {MODEL} (effort={EFFORT})...")
-
-    for turn in range(1, MAX_CONTINUATIONS + 1):
-        # Streaming, bo przy kilkudziesięciu wyszukiwaniach jedno żądanie trwa
-        # wiele minut i wersja bez streamingu trafiłaby w timeout HTTP SDK.
-        with client.messages.stream(
-            model=MODEL,
-            max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
-            output_config={"effort": EFFORT},
-            tools=[
-                {
-                    "type": "web_search_20260209",
-                    "name": "web_search",
-                    "max_uses": MAX_SEARCHES,
-                }
-            ],
-            messages=messages,
-        ) as stream:
-            response = stream.get_final_message()
-
-        for block in response.content:
-            if block.type == "text":
-                text_parts.append(block.text)
-            elif block.type == "server_tool_use" and block.name == "web_search":
-                search_calls += 1
-
-        usage = response.usage
-        log.info(
-            f"Tura {turn}: stop_reason={response.stop_reason}, "
-            f"wyszukiwań łącznie={search_calls}, "
-            f"tokeny wy={usage.output_tokens}, we={usage.input_tokens}"
-        )
-
-        if response.stop_reason == "max_tokens":
-            raise RuntimeError(
-                f"Model wyczerpał limit {MAX_TOKENS} tokenów — raport jest ucięty. "
-                "Zwiększ ANTHROPIC_MAX_TOKENS w .env albo obniż liczbę newsów w prompcie."
-            )
-
-        if response.stop_reason == "refusal":
-            raise RuntimeError(f"Model odmówił odpowiedzi: {response.stop_details}")
-
-        if response.stop_reason != "pause_turn":
-            break
-
-        # Serwerowa pętla narzędzia dobiła do limitu iteracji — dokładamy
-        # odpowiedź asystenta i wysyłamy ponownie, żeby model kontynuował.
-        # Nie dodajemy własnej wiadomości "kontynuuj" — API wznawia samo.
-        messages = [
-            {"role": "user", "content": build_user_prompt()},
-            {"role": "assistant", "content": response.content},
-        ]
-    else:
-        raise RuntimeError(
-            f"Model nie skończył po {MAX_CONTINUATIONS} wznowieniach (pause_turn). "
-            "Zwiększ ANTHROPIC_MAX_CONTINUATIONS albo obniż ANTHROPIC_MAX_SEARCHES."
-        )
-
-    full_text = "\n".join(text_parts).strip()
-    log.info(f"Otrzymano odpowiedź: {len(full_text)} znaków, {search_calls} wyszukiwań.")
-
-    if not full_text or len(full_text) < 500:
-        raise RuntimeError("Odpowiedź modelu jest podejrzanie krótka lub pusta.")
-
-    return full_text
-
-
-# --------------------------------------------------------------------------
-# Tryb RSS: etap 1 (wybór newsów) i etap 2 (pisanie raportu)
+# Etap 1 (wybór newsów) i etap 2 (pisanie raportu)
 # --------------------------------------------------------------------------
 
 SELECT_SYSTEM_PROMPT = """Jesteś redaktorem wydania. Dostajesz listę \
@@ -288,20 +200,36 @@ Zasady:
 KANDYDACI:
 {candidates_digest(candidates)}"""
 
-    log.info(f"Etap 1: wybór {wanted} newsów z {len(candidates)} kandydatów...")
-    response = client.messages.parse(
-        model=MODEL,
-        max_tokens=12000,
-        system=SELECT_SYSTEM_PROMPT,
-        output_config={"effort": EFFORT},
-        messages=[{"role": "user", "content": prompt}],
-        output_format=Picks,
+    log.info(f"Etap 1: wybór {wanted} newsów z {len(candidates)} kandydatów (model={GEMINI_MODEL})...")
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=SELECT_SYSTEM_PROMPT,
+            response_mime_type="application/json",
+            response_schema=Picks,
+            max_output_tokens=12000,
+            thinking_config=_thinking_config(),
+        ),
     )
 
-    if response.stop_reason == "max_tokens":
-        raise RuntimeError("Etap 1 przekroczył limit tokenów — zwiększ max_tokens.")
-    if response.parsed_output is None:
-        raise RuntimeError("Etap 1 nie zwrócił poprawnej struktury wyboru.")
+    reason = _finish_reason_name(response)
+    if reason == "MAX_TOKENS":
+        raise RuntimeError("Etap 1 przekroczył limit tokenów — zwiększ max_output_tokens.")
+    if reason not in ("STOP", "BRAK_KANDYDATA"):
+        # BRAK_KANDYDATA = brak response.candidates — obsłużone niżej przez
+        # brak response.parsed. Każdy inny nietypowy powód (SAFETY, RECITATION,
+        # ...) traktujemy jako błąd, żeby nie próbować parsować pustki.
+        raise RuntimeError(f"Etap 1: model zakończył z nietypowym powodem: {reason}")
+
+    picks_obj: Picks | None = getattr(response, "parsed", None)
+    if picks_obj is None:
+        if not response.text:
+            raise RuntimeError("Etap 1 nie zwrócił żadnej treści.")
+        try:
+            picks_obj = Picks.model_validate_json(response.text)
+        except Exception as exc:
+            raise RuntimeError(f"Etap 1: odpowiedź nie jest poprawnym JSON-em wyboru: {exc}")
 
     by_idx = {c.idx: c for c in candidates}
     buckets: dict[tuple[str, str], list] = {
@@ -309,7 +237,7 @@ KANDYDACI:
     }
     used: set[int] = set()
 
-    for pick in response.parsed_output.picks:
+    for pick in picks_obj.picks:
         cand = by_idx.get(pick.idx)
         if cand is None or pick.idx in used:
             continue  # halucynowany lub zdublowany indeks — pomijamy
@@ -391,11 +319,11 @@ def build_write_prompt(buckets: dict[tuple[str, str], list]) -> str:
     return "".join(parts)
 
 
-def generate_via_rss() -> str:
-    """Tryb `rss`: RSS zbiera kandydatów, model wybiera i pisze."""
+def generate_markdown_report() -> str:
+    """RSS zbiera kandydatów, Gemini wybiera (etap 1) i pisze (etap 2)."""
     from rss_collect import collect_candidates, fetch_article_texts
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = _gemini_client()
 
     candidates = collect_candidates()
     buckets = select_news(client, candidates)
@@ -404,50 +332,39 @@ def generate_via_rss() -> str:
     log.info(f"Etap 2: pobieram treść {len(selected)} artykułów...")
     fetch_article_texts(selected)
 
-    log.info(f"Etap 2: piszę raport (model={MODEL}, effort={EFFORT})...")
-    with client.messages.stream(
-        model=MODEL,
-        max_tokens=MAX_TOKENS,
-        system=WRITE_SYSTEM_PROMPT,
-        output_config={"effort": EFFORT},
-        messages=[{"role": "user", "content": build_write_prompt(buckets)}],
-    ) as stream:
-        response = stream.get_final_message()
-
-    usage = response.usage
-    log.info(
-        f"Etap 2: stop_reason={response.stop_reason}, "
-        f"tokeny wy={usage.output_tokens}, we={usage.input_tokens}"
+    log.info(f"Etap 2: piszę raport (model={GEMINI_MODEL})...")
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=build_write_prompt(buckets),
+        config=types.GenerateContentConfig(
+            system_instruction=WRITE_SYSTEM_PROMPT,
+            max_output_tokens=MAX_TOKENS,
+            thinking_config=_thinking_config(),
+        ),
     )
 
-    if response.stop_reason == "max_tokens":
+    reason = _finish_reason_name(response)
+    usage = getattr(response, "usage_metadata", None)
+    log.info(
+        f"Etap 2: finish_reason={reason}, "
+        f"tokeny wy={getattr(usage, 'candidates_token_count', '?')}, "
+        f"we={getattr(usage, 'prompt_token_count', '?')}"
+    )
+
+    if reason == "MAX_TOKENS":
         raise RuntimeError(
             f"Model wyczerpał limit {MAX_TOKENS} tokenów — raport jest ucięty. "
-            "Zwiększ ANTHROPIC_MAX_TOKENS w .env."
+            "Zwiększ GEMINI_MAX_OUTPUT_TOKENS w .env."
         )
-    if response.stop_reason == "refusal":
-        raise RuntimeError(f"Model odmówił odpowiedzi: {response.stop_details}")
+    if reason not in ("STOP", "BRAK_KANDYDATA"):
+        raise RuntimeError(f"Etap 2: model zakończył z nietypowym powodem: {reason}")
 
-    full_text = "\n".join(
-        b.text for b in response.content if b.type == "text"
-    ).strip()
+    full_text = (response.text or "").strip()
 
     if not full_text or len(full_text) < 500:
         raise RuntimeError("Odpowiedź modelu jest podejrzanie krótka lub pusta.")
 
     return full_text
-
-
-def generate_markdown_report() -> str:
-    """Wybiera tryb zbierania newsów na podstawie NEWS_SOURCE."""
-    if NEWS_SOURCE == "rss":
-        return generate_via_rss()
-    if NEWS_SOURCE == "claude_search":
-        return generate_via_claude_search()
-    raise RuntimeError(
-        f"Nieznana wartość NEWS_SOURCE={NEWS_SOURCE!r} — użyj 'rss' "
-        "albo 'claude_search'."
-    )
 
 
 # --------------------------------------------------------------------------
@@ -591,7 +508,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 {content}
 </main>
 <footer>
-  Generowane automatycznie codziennie po 8:00 przez model AI na podstawie
+  Generowane automatycznie rano w dni robocze przez model AI na podstawie
   wskazanych źródeł. To streszczenie, nie oryginalna treść dziennikarska —
   pełne artykuły znajdziesz pod linkami „🔗 Źródło” przy każdym newsie.
   Treść może zawierać błędy — zawsze sprawdzaj źródła. Strona prywatna,
