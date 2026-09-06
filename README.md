@@ -192,6 +192,11 @@ kanał nie przerywa raportu) — wynik widać w logu kroku „Sprawdź kanały R
    odpowiedź, przekroczony limit tokenów, zablokowana odpowiedź), skrypt
    **nie dotyka** repo — poprzednia wersja strony zostaje online, a przebieg
    Actions kończy się na czerwono z komunikatem błędu w logu.
+6. Przejściowe błędy serwera Gemini (5xx — „high demand”, przeciążenie) są
+   ponawiane automatycznie, do 4 prób z rosnącym opóźnieniem (`_call_gemini`
+   w `generate_report.py`). Błędy klienta (4xx — zła nazwa modelu, zły
+   parametr) **nie** są ponawiane, bo powtórka i tak zwróci ten sam błąd —
+   skrypt zawodzi od razu z czytelnym komunikatem zamiast czekać na próżno.
 
 ## 8. Koszty i limity
 

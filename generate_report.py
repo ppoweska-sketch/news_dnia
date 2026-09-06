@@ -22,6 +22,7 @@ import os
 import sys
 import subprocess
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -29,7 +30,7 @@ from typing import Literal
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from google import genai
-from google.genai import types
+from google.genai import types, errors as genai_errors
 import markdown as md
 
 # --------------------------------------------------------------------------
@@ -155,6 +156,35 @@ def _finish_reason_name(response) -> str:
     return getattr(reason, "name", str(reason))
 
 
+# Ile razy ponowić wywołanie Gemini po przejściowym błędzie serwera (5xx —
+# przeciążenie, "high demand") i ile poczekać przed kolejną próbą (rośnie
+# z każdą próbą). Zaobserwowane 06.09.2026: 503 "currently experiencing
+# high demand" na gemini-3.6-flash — SDK samo ponawia kilka razy wewnętrznie
+# (widać "tenacity" w tracebacku), ale poddaje się zbyt szybko jak na
+# uruchomienie raz dziennie, gdzie i tak nie ma pośpiechu.
+CALL_MAX_ATTEMPTS = 4
+CALL_RETRY_DELAY = 15
+
+
+def _call_gemini(fn, label: str):
+    """Wywołuje fn() (wywołanie do client.models.generate_content) z retry
+    na przejściowe błędy serwera. Błędów klienta (4xx — zła nazwa modelu,
+    zły parametr) NIE ponawiamy, bo powtórka i tak zwróci ten sam błąd —
+    lepiej zawieść szybko z czytelnym komunikatem niż czekać na próżno."""
+    for attempt in range(1, CALL_MAX_ATTEMPTS + 1):
+        try:
+            return fn()
+        except genai_errors.ServerError as exc:
+            if attempt == CALL_MAX_ATTEMPTS:
+                raise
+            delay = CALL_RETRY_DELAY * attempt
+            log.warning(
+                f"{label}: błąd serwera Gemini (próba {attempt}/{CALL_MAX_ATTEMPTS}): "
+                f"{exc}. Ponawiam za {delay}s."
+            )
+            time.sleep(delay)
+
+
 # --------------------------------------------------------------------------
 # Etap 1 (wybór newsów) i etap 2 (pisanie raportu)
 # --------------------------------------------------------------------------
@@ -215,16 +245,19 @@ KANDYDACI:
     # Limit wyższy niż surowa treść JSON-a (kilkaset tokenów) by wymagała —
     # model domyślnie może zużywać część budżetu na niewidoczne myślenie
     # (patrz komentarz przy THINKING_BUDGET), więc zostawiamy zapas.
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=SELECT_SYSTEM_PROMPT,
-            response_mime_type="application/json",
-            response_schema=Picks,
-            max_output_tokens=20000,
-            thinking_config=_thinking_config(),
+    response = _call_gemini(
+        lambda: client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=SELECT_SYSTEM_PROMPT,
+                response_mime_type="application/json",
+                response_schema=Picks,
+                max_output_tokens=20000,
+                thinking_config=_thinking_config(),
+            ),
         ),
+        label="Etap 1",
     )
 
     reason = _finish_reason_name(response)
@@ -358,14 +391,17 @@ def generate_markdown_report() -> str:
     fetch_article_texts(selected)
 
     log.info(f"Etap 2: piszę raport (model={GEMINI_MODEL})...")
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=build_write_prompt(buckets),
-        config=types.GenerateContentConfig(
-            system_instruction=WRITE_SYSTEM_PROMPT,
-            max_output_tokens=MAX_TOKENS,
-            thinking_config=_thinking_config(),
+    response = _call_gemini(
+        lambda: client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=build_write_prompt(buckets),
+            config=types.GenerateContentConfig(
+                system_instruction=WRITE_SYSTEM_PROMPT,
+                max_output_tokens=MAX_TOKENS,
+                thinking_config=_thinking_config(),
+            ),
         ),
+        label="Etap 2",
     )
 
     reason = _finish_reason_name(response)
