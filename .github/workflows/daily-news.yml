@@ -96,7 +96,7 @@ jobs:
           SITE_SUBDIR: docs          # strona ląduje w docs/, kod zostaje w korzeniu
           GITHUB_BRANCH: ${{ github.ref_name }}
           GEMINI_MODEL: gemini-3.6-flash
-          GEMINI_MAX_OUTPUT_TOKENS: "16000"
+          GEMINI_MAX_OUTPUT_TOKENS: "40000"
           # Puste = nie wysyłaj parametru wcale. gemini-3.6-flash zwracał
           # 400 INVALID_ARGUMENT z thinking_budget=0 (06.09.2026) — SDK ma
           # też pole thinking_level, więc nowsze modele mogły zmienić sposób

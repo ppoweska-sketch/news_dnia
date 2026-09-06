@@ -67,7 +67,12 @@ REPO_DIR = os.environ.get("REPO_DIR")  # lokalna ścieżka do sklonowanego repo 
 # 06.09.2026 — błąd 404 z API sam podał zamiennik (gemini-3.6-flash), więc
 # gdy to się powtórzy, treść komunikatu błędu jest najszybszym źródłem.
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
-MAX_TOKENS = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "16000"))
+# Przy 16000 model uciął raport po zaledwie 636 widocznych tokenach
+# (06.09.2026, thoughts_token_count niepomiernie duży) — bez wymuszonego
+# thinking_config model domyślnie zużywa część tego samego budżetu na
+# niewidoczne myślenie, więc limit musi mieć spory zapas ponad sam tekst
+# raportu (~6-8 tys. tokenów zmierzone wcześniej dla 50 newsów).
+MAX_TOKENS = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "40000"))
 # Budżet "myślenia" modelu w tokenach. Domyślnie puste = w ogóle nie
 # wysyłamy tego parametru, model używa własnego domyślnego zachowania.
 # Kuszące byłoby wymusić 0 (zadanie to klasyfikacja/streszczanie, nie
@@ -207,6 +212,9 @@ KANDYDACI:
 {candidates_digest(candidates)}"""
 
     log.info(f"Etap 1: wybór {wanted} newsów z {len(candidates)} kandydatów (model={GEMINI_MODEL})...")
+    # Limit wyższy niż surowa treść JSON-a (kilkaset tokenów) by wymagała —
+    # model domyślnie może zużywać część budżetu na niewidoczne myślenie
+    # (patrz komentarz przy THINKING_BUDGET), więc zostawiamy zapas.
     response = client.models.generate_content(
         model=GEMINI_MODEL,
         contents=prompt,
@@ -214,14 +222,25 @@ KANDYDACI:
             system_instruction=SELECT_SYSTEM_PROMPT,
             response_mime_type="application/json",
             response_schema=Picks,
-            max_output_tokens=12000,
+            max_output_tokens=20000,
             thinking_config=_thinking_config(),
         ),
     )
 
     reason = _finish_reason_name(response)
+    usage1 = getattr(response, "usage_metadata", None)
+    log.info(
+        f"Etap 1: finish_reason={reason}, "
+        f"tokeny wy={getattr(usage1, 'candidates_token_count', '?')}, "
+        f"we={getattr(usage1, 'prompt_token_count', '?')}, "
+        f"myślenie={getattr(usage1, 'thoughts_token_count', '?')}"
+    )
     if reason == "MAX_TOKENS":
-        raise RuntimeError("Etap 1 przekroczył limit tokenów — zwiększ max_output_tokens.")
+        thoughts1 = getattr(usage1, "thoughts_token_count", None) or 0
+        raise RuntimeError(
+            f"Etap 1 przekroczył limit tokenów (z tego {thoughts1} poszło na "
+            "niewidoczne myślenie modelu) — zwiększ max_output_tokens w select_news()."
+        )
     if reason not in ("STOP", "BRAK_KANDYDATA"):
         # BRAK_KANDYDATA = brak response.candidates — obsłużone niżej przez
         # brak response.parsed. Każdy inny nietypowy powód (SAFETY, RECITATION,
@@ -354,12 +373,15 @@ def generate_markdown_report() -> str:
     log.info(
         f"Etap 2: finish_reason={reason}, "
         f"tokeny wy={getattr(usage, 'candidates_token_count', '?')}, "
-        f"we={getattr(usage, 'prompt_token_count', '?')}"
+        f"we={getattr(usage, 'prompt_token_count', '?')}, "
+        f"myślenie={getattr(usage, 'thoughts_token_count', '?')}"
     )
 
     if reason == "MAX_TOKENS":
+        thoughts = getattr(usage, "thoughts_token_count", None) or 0
         raise RuntimeError(
-            f"Model wyczerpał limit {MAX_TOKENS} tokenów — raport jest ucięty. "
+            f"Model wyczerpał limit {MAX_TOKENS} tokenów — raport jest ucięty "
+            f"(z tego {thoughts} poszło na niewidoczne myślenie modelu). "
             "Zwiększ GEMINI_MAX_OUTPUT_TOKENS w .env."
         )
     if reason not in ("STOP", "BRAK_KANDYDATA"):

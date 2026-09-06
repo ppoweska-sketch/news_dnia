@@ -207,11 +207,16 @@ Pokrętła w `env:` workflow-a (i w `.env` lokalnie):
   https://ai.google.dev/gemini-api/docs/models i podmień tu.
 - `GEMINI_MAX_OUTPUT_TOKENS` — górny limit tekstu raportu. Za niski = raport
   urwany w połowie (skrypt to wykryje i przerwie, nie publikując niepełnej
-  strony).
+  strony). **Ten limit dzieli się z niewidocznym myśleniem modelu** (patrz
+  niżej) — musi mieć spory zapas ponad sam tekst raportu (~6-8 tys. tokenów
+  dla 50 newsów). Domyślnie `40000`; przy `16000` raport ucinał się po
+  zaledwie 636 widocznych tokenach (06.09.2026). Log pokazuje rozbicie
+  (`tokeny wy=... myślenie=...`), więc widać wprost, ile poszło gdzie.
 - `GEMINI_THINKING_BUDGET` — domyślnie puste (parametr w ogóle nie jest
-  wysyłany, model używa własnego domyślnego zachowania). Próba wyłączenia
-  myślenia (`=0`) na `gemini-3.6-flash` kończyła się błędem `400
-  INVALID_ARGUMENT` (06.09.2026) — zanim ustawisz tu liczbę, sprawdź
+  wysyłany, model używa własnego domyślnego zachowania — które, sądząc po
+  logach, oznacza WŁĄCZONE myślenie zjadające część `GEMINI_MAX_OUTPUT_TOKENS`).
+  Próba wyłączenia myślenia (`=0`) na `gemini-3.6-flash` kończyła się błędem
+  `400 INVALID_ARGUMENT` (06.09.2026) — zanim ustawisz tu liczbę, sprawdź
   w dokumentacji aktualnego modelu, czy akceptuje ten kształt parametru
   (SDK ma też pole `thinking_level`, więc mogło się zmienić).
 - Liczba newsów na sekcję (`PER_BUCKET` w `generate_report.py`) — mniej
