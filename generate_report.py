@@ -165,7 +165,13 @@ def _finish_reason_name(response) -> str:
 # high demand" na gemini-3.6-flash — SDK samo ponawia kilka razy wewnętrznie
 # (widać "tenacity" w tracebacku), ale poddaje się zbyt szybko jak na
 # uruchomienie raz dziennie, gdzie i tak nie ma pośpiechu.
-CALL_MAX_ATTEMPTS = 4
+#
+# 4 próby (do ~2 min łącznie) NIE wystarczyły 11.09.2026 — przeciążenie
+# trwało dłużej, ~4 minuty nieprzerwanych 503. Podniesione do 6 (do ~9 min
+# łącznie na etap, z zapasem w timeout-minutes joba w workflow) — wciąż
+# bez presji czasowej, więc lepiej poczekać dłużej niż zawieść i czekać
+# do jutra (raport ma wyjść rano, nie ma sensu popołudniowego fallbacku).
+CALL_MAX_ATTEMPTS = 6
 CALL_RETRY_DELAY = 15
 
 
