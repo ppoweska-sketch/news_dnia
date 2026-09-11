@@ -2,8 +2,9 @@ name: Codzienny przegląd wiadomości
 
 on:
   schedule:
-    # Cel: raport gotowy ok. 9:00-10:00 czasu warszawskiego, TYLKO dni robocze
-    # (pon-pt = "1-5" w polu dnia tygodnia crona).
+    # Cel: raport gotowy ok. 9:00-10:00 czasu warszawskiego, codziennie
+    # (włącznie z weekendami — zmienione 11.09.2026, wcześniej "1-5" tylko
+    # dni robocze).
     #
     # UWAGA: GitHub Actions potrafi opóźniać zaplanowane uruchomienia —
     # zaobserwowane (11-13 sierpnia 2026): konsekwentnie 3,5-4,5h opóźnienia.
@@ -16,7 +17,7 @@ on:
     # (użytkownik czyta go przed/w trakcie dnia) — gdyby poranny przebieg
     # zawiódł, popołudniowy "dogonienie" i tak nie spełniłoby celu. Lepiej
     # poczekać do jutrzejszego porannego niż wygenerować raport po południu.
-    - cron: "50 4 * * 1-5"
+    - cron: "50 4 * * *"
   workflow_dispatch:      # przycisk "Run workflow" do testów ręcznych, o dowolnej porze/dniu
 
 # Bez tego wbudowany GITHUB_TOKEN jest tylko do odczytu i push się nie uda.
@@ -49,29 +50,21 @@ jobs:
           # licząc w czasie warszawskim (ten sam commit w UTC mógłby wypaść
           # na wczoraj/dziś w zależności od pory).
           DZIS=$(TZ=Europe/Warsaw date +%Y-%m-%d)
-          DZIEN_TYGODNIA=$(TZ=Europe/Warsaw date +%u)   # 1=poniedziałek ... 7=niedziela
           if [ -f docs/index.html ]; then
             OSTATNI=$(TZ=Europe/Warsaw git log -1 --format=%cd --date=format-local:%Y-%m-%d -- docs/index.html)
           else
             OSTATNI="(brak raportu)"
           fi
-          echo "Dziś (Warszawa): $DZIS, dzień tygodnia: $DZIEN_TYGODNIA. Ostatni raport: $OSTATNI."
+          echo "Dziś (Warszawa): $DZIS. Ostatni raport: $OSTATNI."
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Uruchomienie ręczne — generuję niezależnie od daty i dnia tygodnia."
+            echo "Uruchomienie ręczne — generuję niezależnie od daty."
             echo "uruchom=tak" >> "$GITHUB_OUTPUT"
-          elif [ "$DZIEN_TYGODNIA" -ge 6 ]; then
-            # Pole dnia tygodnia w cronie ("1-5") powinno to wykluczyć samo,
-            # ale przy wystarczająco dużym opóźnieniu piątkowy przebieg
-            # mógłby w teorii wykonać się już w sobotę — druga, niezależna
-            # warstwa tego samego zabezpieczenia.
-            echo "Weekend w Warszawie — pomijam (raport tylko w dni robocze)."
-            echo "uruchom=nie" >> "$GITHUB_OUTPUT"
           elif [ "$OSTATNI" = "$DZIS" ]; then
             echo "Dzisiejszy raport już istnieje — pomijam, żeby nie generować drugi raz."
             echo "uruchom=nie" >> "$GITHUB_OUTPUT"
           else
-            echo "Brak dzisiejszego raportu, dzień roboczy — generuję."
+            echo "Brak dzisiejszego raportu — generuję."
             echo "uruchom=tak" >> "$GITHUB_OUTPUT"
           fi
 

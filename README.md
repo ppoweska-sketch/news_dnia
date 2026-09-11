@@ -2,8 +2,9 @@
 
 Skrypt generuje przegląd newsów (23 polskojęzyczne kanały RSS + Gemini API),
 renderuje go jako mobile-first HTML i publikuje na GitHub Pages, nadpisując
-poprzednią wersję strony. Uruchamiany rano w dni robocze przez **GitHub
-Actions** — zero własnej maszyny, zero PAT-a, zero utrzymania, zero opłat
+poprzednią wersję strony. Uruchamiany rano, codziennie (włącznie z
+weekendami), przez **GitHub Actions** — zero własnej maszyny, zero PAT-a,
+zero utrzymania, zero opłat
 (publiczne repo + darmowy poziom Gemini Flash).
 
 5 sekcji × Polska/Świat × 5 newsów = 50 newsów dziennie. Sekcje: Ogólne
@@ -81,10 +82,10 @@ Sprawdź w tej kolejności:
 Jeśli krok 4 pokazuje starą treść mimo zielonego przebiegu — to zwykle
 czas budowania Pages, nie błąd skryptu. Odśwież za minutę.
 
-## 4. Harmonogram: rano, dni robocze
+## 4. Harmonogram: rano, codziennie
 
-Jeden wpis `cron`: `50 4 * * 1-5` (4:50 UTC, poniedziałek–piątek). Dwie
-rzeczy, o których trzeba wiedzieć:
+Jeden wpis `cron`: `50 4 * * *` (4:50 UTC, codziennie — włącznie z
+weekendami, zmienione 11.09.2026). Dwie rzeczy, o których trzeba wiedzieć:
 
 - **GitHub Actions opóźnia zaplanowane uruchomienia**, czasem o kilka
   godzin — zaobserwowane (sierpień 2026): konsekwentnie 3,5–4,5h. Godzina
@@ -103,12 +104,10 @@ Krok „Sprawdź, czy raport dziś już powstał” nie pilnuje godziny — spra
 datę ostatniego commita do `docs/index.html` (czas warszawski) i generuje
 tylko wtedy, gdy dzisiejszego jeszcze nie ma. Dzięki temu opóźnienia
 GitHuba nie blokują niczego: raport powstanie o dowolnej porze, jeśli
-tylko jeszcze go dziś nie było. Osobny, niezależny sprawdzian dnia tygodnia
-w tym samym kroku chroni przed wygenerowaniem w weekend, nawet gdyby
-piątkowe opóźnienie kiedyś wjechało w sobotę.
+tylko jeszcze go dziś nie było.
 
-`workflow_dispatch` (ręczne „Run workflow”) omija oba te warunki — działa
-o dowolnej porze i w dowolny dzień, do testów.
+`workflow_dispatch` (ręczne „Run workflow”) omija ten warunek — działa
+o dowolnej porze, do testów.
 
 ## 5. Test lokalny (opcjonalnie)
 
@@ -242,7 +241,7 @@ minut miesięcznie).
 | Krok „Wygeneruj i opublikuj raport” kończy się `Brakuje zmiennych w .env` | brak sekretu `GEMINI_API_KEY` w Settings → Secrets and variables → Actions, albo literówka w jego nazwie | zakładka Secrets w ustawieniach repo — nazwa musi być dokładnie `GEMINI_API_KEY` |
 | Błąd wspominający „model not found” albo 404 z Gemini | nazwa modelu w `GEMINI_MODEL` przestała istnieć (Google zmienia nazwy) | https://ai.google.dev/gemini-api/docs/models — podmień na aktualną nazwę z rodziny Flash/Flash-Lite |
 | `RuntimeError: Polecenie nie powiodło się: git push ...` | repo prywatne bez uprawnień workflow, albo brak `permissions: contents: write` w pliku `.yml` | sprawdź `permissions:` na górze `daily-news.yml`; sprawdź czy repo jest publiczne |
-| Workflow kończy krok „Sprawdź, czy raport dziś już powstał” z `uruchom=nie`, mimo że strona jest nieaktualna | krok poprawnie wykrył, że dzisiejszy raport już istnieje (patrz `git log -1 -- docs/index.html`) — albo dziś weekend | log tego kroku pokazuje dokładnie dzisiejszą datę, dzień tygodnia i datę ostatniego raportu |
+| Workflow kończy krok „Sprawdź, czy raport dziś już powstał” z `uruchom=nie`, mimo że strona jest nieaktualna | krok poprawnie wykrył, że dzisiejszy raport już istnieje (patrz `git log -1 -- docs/index.html`) | log tego kroku pokazuje dokładnie dzisiejszą datę i datę ostatniego raportu |
 | Workflow w ogóle się nie uruchamia o czasie | Actions bywa opóźnione przy dużym obciążeniu GitHuba (patrz sekcja 4); zaplanowane workflow usypiają po 60 dniach bez commitów do repo (u nas nie powinno wystąpić, bo codzienny commit to resetuje) | zakładka Actions → historia uruchomień, porównaj `created_at` z nominalną godziną cronu; „Run workflow” ręcznie jako test |
 | Odpowiedź modelu "podejrzanie krótka" albo `finish_reason` inny niż `STOP` | za mało kandydatów RSS (padło dużo kanałów), za niski `GEMINI_MAX_OUTPUT_TOKENS`, albo model zablokował odpowiedź (SAFETY/RECITATION) | log kroku „Sprawdź kanały RSS”; log pokazuje dokładny `finish_reason` |
 | Pages pokazuje 404 zamiast strony | GitHub Pages nie jest ustawione na branch/folder, do którego pushuje skrypt | Settings → Pages: Branch = `main`, katalog = `/docs` |
