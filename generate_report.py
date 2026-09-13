@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
+import httpx
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from google import genai
@@ -174,22 +175,33 @@ def _finish_reason_name(response) -> str:
 CALL_MAX_ATTEMPTS = 6
 CALL_RETRY_DELAY = 15
 
+# Błędy, które ma sens ponawiać: genai_errors.ServerError to zwykłe 5xx
+# z poprawną odpowiedzią HTTP. Ale 13.09.2026 połączenie padło w środku
+# przeciążenia jeszcze zanim serwer zdążył odesłać jakikolwiek status —
+# httpx.RemoteProtocolError ("Server disconnected without sending a
+# response"), którego SDK NIE opakowuje w ServerError, bo nie ma tu
+# żadnej odpowiedzi HTTP do sklasyfikowania. httpx.TransportError to
+# wspólna klasa bazowa dla tej i pokrewnych awarii sieciowych (timeouty,
+# zerwane połączenie) — tak samo przejściowych jak 5xx, więc też ponawiamy.
+RETRYABLE_ERRORS = (genai_errors.ServerError, httpx.TransportError)
+
 
 def _call_gemini(fn, label: str):
     """Wywołuje fn() (wywołanie do client.models.generate_content) z retry
-    na przejściowe błędy serwera. Błędów klienta (4xx — zła nazwa modelu,
-    zły parametr) NIE ponawiamy, bo powtórka i tak zwróci ten sam błąd —
-    lepiej zawieść szybko z czytelnym komunikatem niż czekać na próżno."""
+    na przejściowe błędy serwera/sieci (RETRYABLE_ERRORS). Błędów klienta
+    (4xx — zła nazwa modelu, zły parametr) NIE ponawiamy, bo powtórka i tak
+    zwróci ten sam błąd — lepiej zawieść szybko z czytelnym komunikatem niż
+    czekać na próżno."""
     for attempt in range(1, CALL_MAX_ATTEMPTS + 1):
         try:
             return fn()
-        except genai_errors.ServerError as exc:
+        except RETRYABLE_ERRORS as exc:
             if attempt == CALL_MAX_ATTEMPTS:
                 raise
             delay = CALL_RETRY_DELAY * attempt
             log.warning(
-                f"{label}: błąd serwera Gemini (próba {attempt}/{CALL_MAX_ATTEMPTS}): "
-                f"{exc}. Ponawiam za {delay}s."
+                f"{label}: przejściowy błąd ({type(exc).__name__}, próba "
+                f"{attempt}/{CALL_MAX_ATTEMPTS}): {exc}. Ponawiam za {delay}s."
             )
             time.sleep(delay)
 

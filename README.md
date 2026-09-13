@@ -191,14 +191,20 @@ kanał nie przerywa raportu) — wynik widać w logu kroku „Sprawdź kanały R
    odpowiedź, przekroczony limit tokenów, zablokowana odpowiedź), skrypt
    **nie dotyka** repo — poprzednia wersja strony zostaje online, a przebieg
    Actions kończy się na czerwono z komunikatem błędu w logu.
-6. Przejściowe błędy serwera Gemini (5xx — „high demand”, przeciążenie) są
-   ponawiane automatycznie, do 6 prób z rosnącym opóźnieniem (`_call_gemini`
-   w `generate_report.py`; podniesione z 4 po tym, jak 11.09.2026 realne
-   przeciążenie trwało dłużej niż ~2 min, na które starczały 4 próby —
-   zadanie i tak nie ma presji czasowej, więc lepiej poczekać dłużej niż
-   zawieść i czekać do jutra). Błędy klienta (4xx — zła nazwa modelu, zły
-   parametr) **nie** są ponawiane, bo powtórka i tak zwróci ten sam błąd —
-   skrypt zawodzi od razu z czytelnym komunikatem zamiast czekać na próżno.
+6. Przejściowe błędy są ponawiane automatycznie, do 6 prób z rosnącym
+   opóźnieniem (`_call_gemini` w `generate_report.py`, próby podniesione
+   z 4 po tym, jak 11.09.2026 realne przeciążenie trwało dłużej niż ~2 min).
+   Dwie kategorie liczą się jako przejściowe (`RETRYABLE_ERRORS`):
+   - **Błędy serwera Gemini** (5xx — „high demand”, przeciążenie).
+   - **Błędy sieci/połączenia** (`httpx.TransportError` — zerwane
+     połączenie, timeout; dodane 13.09.2026, bo `httpx.RemoteProtocolError`
+     „Server disconnected without sending a response” nie jest owinięte
+     przez SDK w `ServerError` i wcześniej przechodziło przez retry
+     niezłapane).
+
+   Błędy klienta (4xx — zła nazwa modelu, zły parametr) **nie** są
+   ponawiane, bo powtórka i tak zwróci ten sam błąd — skrypt zawodzi od
+   razu z czytelnym komunikatem zamiast czekać na próżno.
 
 ## 8. Koszty i limity
 
