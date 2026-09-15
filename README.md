@@ -82,31 +82,51 @@ Sprawdź w tej kolejności:
 Jeśli krok 4 pokazuje starą treść mimo zielonego przebiegu — to zwykle
 czas budowania Pages, nie błąd skryptu. Odśwież za minutę.
 
-## 4. Harmonogram: rano, codziennie
+## 4. Harmonogram: gotowe do 8:00, codziennie
 
-Jeden wpis `cron`: `50 4 * * *` (4:50 UTC, codziennie — włącznie z
-weekendami, zmienione 11.09.2026). Dwie rzeczy, o których trzeba wiedzieć:
+**Dwa wpisy `cron`**, oba celujące w wykonanie przed 8:00 czasu
+warszawskiego: `50 2 * * *` i `50 4 * * *` (2:50 i 4:50 UTC, codziennie —
+włącznie z weekendami, zmienione 11.09.2026).
 
-- **GitHub Actions opóźnia zaplanowane uruchomienia**, czasem o kilka
-  godzin — zaobserwowane (sierpień 2026): konsekwentnie 3,5–4,5h. Godzina
-  cronu jest tak dobrana, żeby mimo tego opóźnienia raport realnie powstawał
-  ok. 8:30–10:30 czasu warszawskiego. To szacunek z kilku dni obserwacji,
-  nie gwarancja — jeśli po tygodniu raport systematycznie wychodzi poza to
-  okno, skoryguj godzinę w pliku `.yml` na podstawie faktycznych czasów
-  uruchomień (zakładka Actions pokazuje dokładny `created_at` każdego
-  przebiegu).
-- **Celowo bez wpisu zapasowego później w dniu.** Jeśli poranny przebieg
-  faktycznie zawiedzie (nie tylko się opóźni), raport czeka do jutra — nie
-  ma sensu generować popołudniowego "dogonienia", którego użytkownik i tak
-  nie przeczyta o właściwej porze.
+**Dlaczego dwa, nie jeden.** GitHub Actions **nie gwarantuje** czasu
+uruchomienia zaplanowanego zadania. Tydzień realnych danych (nie 2 dni jak
+w pierwszej wersji tego harmonogramu) pokazał, że opóźnienie nie jest stałą
+wartością do skompensowania jedną poprawką godziny — bywa prawie zerowe
+albo wielogodzinne, bez przewidywalnego wzorca:
 
-Krok „Sprawdź, czy raport dziś już powstał” nie pilnuje godziny — sprawdza
-datę ostatniego commita do `docs/index.html` (czas warszawski) i generuje
-tylko wtedy, gdy dzisiejszego jeszcze nie ma. Dzięki temu opóźnienia
-GitHuba nie blokują niczego: raport powstanie o dowolnej porze, jeśli
-tylko jeszcze go dziś nie było.
+| Dni | Opóźnienie startu | Zakończone (Warszawa) |
+|---|---|---|
+| 7–10.09 | ~6 min | ~7:00 — przed celem |
+| 11–14.09 | 4h20min–5h19min | 9:00–12:12 — po celu |
 
-`workflow_dispatch` (ręczne „Run workflow”) omija ten warunek — działa
+Przesunięcie jednego wpisu wcześniej nie rozwiązuje tego niezawodnie: w
+dobry dzień po prostu skończy jeszcze wcześniej (bez szkody), ale w zły
+dzień nadal może wypaść po 8:00 — opóźnienie bywa większe niż jakikolwiek
+rozsądny zapas. Dwa **niezależne** wpisy dają dwie osobne szanse: krok
+„Sprawdź, czy raport dziś już powstał” sprawia, że drugi wpis jest darmowy
+(natychmiastowy no-op), jeśli pierwszy już się udał — a jeśli pierwszy
+utknął w opóźnieniu GitHuba, drugi dostaje niezależną szansę na wykonanie
+się na czas. To podnosi prawdopodobieństwo trafienia przed 8:00, ale
+**wciąż nie jest gwarancją** — nie ma sposobu, żeby to było gwarancją przy
+darmowym harmonogramie GitHuba.
+
+Krok „Sprawdź, czy raport dziś już powstał” nie pilnuje samej godziny —
+sprawdza datę ostatniego commita do `docs/index.html` (czas warszawski)
+i generuje tylko wtedy, gdy dzisiejszego jeszcze nie ma. Ten sam mechanizm,
+który robi drugi wpis crona darmowym, chroni też przed wygenerowaniem
+dwa razy w ciągu dnia.
+
+**Celowo bez wpisu zapasowego później w dniu** (np. po południu). Jeśli
+oba poranne wpisy faktycznie zawiodą (nie tylko się opóźnią), raport czeka
+do jutra — nie ma sensu generować popołudniowego "dogonienia", którego
+użytkownik i tak nie przeczyta o właściwej porze.
+
+Jeśli po kolejnym tygodniu raport nadal systematycznie wychodzi po 8:00,
+sprawdź faktyczne czasy uruchomień w zakładce Actions (`created_at` każdego
+przebiegu) i albo przesuń oba wpisy wcześniej, albo rozważ dodanie
+trzeciego — to nie zmienia zasady działania, tylko liczbę rzutów kostką.
+
+`workflow_dispatch` (ręczne „Run workflow”) omija warunek daty — działa
 o dowolnej porze, do testów.
 
 ## 5. Test lokalny (opcjonalnie)

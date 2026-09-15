@@ -2,22 +2,25 @@ name: Codzienny przegląd wiadomości
 
 on:
   schedule:
-    # Cel: raport gotowy ok. 9:00-10:00 czasu warszawskiego, codziennie
-    # (włącznie z weekendami — zmienione 11.09.2026, wcześniej "1-5" tylko
-    # dni robocze).
+    # Cel: raport GOTOWY najpóźniej o 8:00 czasu warszawskiego, codziennie.
     #
-    # UWAGA: GitHub Actions potrafi opóźniać zaplanowane uruchomienia —
-    # zaobserwowane (11-13 sierpnia 2026): konsekwentnie 3,5-4,5h opóźnienia.
-    # Ten wpis (4:50 UTC = 6:50 latem/7:50 zimą w Warszawie) uwzględnia to
-    # opóźnienie z zapasem, celując w realne wykonanie ok. 8:30-10:30.
-    # To szacunek na podstawie 2 dni obserwacji, nie gwarancja — jeśli po
-    # tygodniu raport regularnie wychodzi poza 9-10, dostosuj tę godzinę.
+    # UWAGA (zaktualizowane 15.09.2026 na podstawie tygodnia realnych danych,
+    # nie 2 dni jak poprzednio): GitHub Actions NIE gwarantuje czasu
+    # uruchomienia zaplanowanego zadania, a opóźnienie nie jest stałą
+    # wartością do skompensowania — bywa prawie zerowe (~6 min, 7-10.09) albo
+    # wielogodzinne (4h20min-5h19min, 11-14.09), bez przewidywalnego wzorca.
+    # Przesunięcie jednego wpisu wcześniej NIE rozwiązuje tego niezawodnie:
+    # w dobry dzień skończy jeszcze wcześniej (bez szkody), ale w zły dzień
+    # nadal może wypaść po 8:00.
     #
-    # Celowo BEZ popołudniowego wpisu zapasowego: raport ma sens tylko rano
-    # (użytkownik czyta go przed/w trakcie dnia) — gdyby poranny przebieg
-    # zawiódł, popołudniowy "dogonienie" i tak nie spełniłoby celu. Lepiej
-    # poczekać do jutrzejszego porannego niż wygenerować raport po południu.
-    - cron: "50 4 * * *"
+    # Rozwiązanie: DWA niezależne wpisy, oba wycelowane przed 8:00 w dobrym
+    # przypadku. Krok "Sprawdź, czy raport dziś już powstał" niżej sprawia,
+    # że drugi jest darmowy, jeśli pierwszy się udał (natychmiastowy no-op) —
+    # a jeśli pierwszy utknął w opóźnieniu GitHuba, drugi dostaje NIEZALEŻNĄ
+    # szansę. To podnosi prawdopodobieństwo trafienia przed 8:00, ale wciąż
+    # nie jest gwarancją — GitHub tego nie gwarantuje nikomu.
+    - cron: "50 2 * * *"   # pierwsza próba: w dobrym przypadku gotowe ok. 5:00 UTC / 7:00 Warszawa
+    - cron: "50 4 * * *"   # druga, niezależna próba (dawny jedyny wpis) — no-op jeśli pierwsza się udała
   workflow_dispatch:      # przycisk "Run workflow" do testów ręcznych, o dowolnej porze/dniu
 
 # Bez tego wbudowany GITHUB_TOKEN jest tylko do odczytu i push się nie uda.
