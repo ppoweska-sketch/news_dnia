@@ -69,6 +69,19 @@ REPO_DIR = os.environ.get("REPO_DIR")  # lokalna ścieżka do sklonowanego repo 
 # 06.09.2026 — błąd 404 z API sam podał zamiennik (gemini-3.6-flash), więc
 # gdy to się powtórzy, treść komunikatu błędu jest najszybszym źródłem.
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+# Model zapasowy, gdy podstawowy długo nie odpowiada (503 UNAVAILABLE —
+# tak padły przebiegi 11, 13 i 18.09.2026 mimo wyczerpania ponowień).
+# Przeciążenie bywa per model, więc inny Flash/Flash-Lite z tego samego API
+# często działa, gdy główny nie. Musi być z rodziny Flash/Flash-Lite, żeby
+# łapać się na darmowy poziom; jest słabszy niż Flash — raport z niego jest
+# odrobinę gorszy, ale to lepsze niż brak raportu. Pusta wartość wyłącza.
+# Gdy nazwa się zestarzeje (404), komunikat błędu podpowie zamiennik —
+# tak samo jak przy GEMINI_MODEL.
+# UWAGA: "gemini-3.6-flash-lite" nigdy nie istniał (sprawdzone 18.09.2026
+# na ai.google.dev/gemini-api/docs/models) — fallback dostawałby 404.
+# Poprawny, Stable zamiennik z tej samej rodziny i darmowego poziomu:
+# gemini-3.5-flash-lite (input 1 048 576 / output 65 536 tokenów).
+GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")
 # Bez wymuszonego thinking_config model domyślnie zużywa część TEGO SAMEGO
 # budżetu na niewidoczne myślenie — i to sporo, nieproporcjonalnie do
 # wejścia: zmierzone 06.09.2026, etap 2 (pisanie), ~45-50 tys. tokenów
@@ -160,20 +173,24 @@ def _finish_reason_name(response) -> str:
     return getattr(reason, "name", str(reason))
 
 
-# Ile razy ponowić wywołanie Gemini po przejściowym błędzie serwera (5xx —
-# przeciążenie, "high demand") i ile poczekać przed kolejną próbą (rośnie
-# z każdą próbą). Zaobserwowane 06.09.2026: 503 "currently experiencing
-# high demand" na gemini-3.6-flash — SDK samo ponawia kilka razy wewnętrznie
-# (widać "tenacity" w tracebacku), ale poddaje się zbyt szybko jak na
-# uruchomienie raz dziennie, gdzie i tak nie ma pośpiechu.
-#
-# 4 próby (do ~2 min łącznie) NIE wystarczyły 11.09.2026 — przeciążenie
-# trwało dłużej, ~4 minuty nieprzerwanych 503. Podniesione do 6 (do ~9 min
-# łącznie na etap, z zapasem w timeout-minutes joba w workflow) — wciąż
-# bez presji czasowej, więc lepiej poczekać dłużej niż zawieść i czekać
-# do jutra (raport ma wyjść rano, nie ma sensu popołudniowego fallbacku).
-CALL_MAX_ATTEMPTS = 6
-CALL_RETRY_DELAY = 15
+# Ponawianie błędów przejściowych (5xx — przeciążenie "high demand" /
+# UNAVAILABLE, awarie sieci, 429). Historia:
+# - 4 próby (~2 min) nie wystarczyły 11.09.2026 — przeciążenie trwało ~4 min;
+# - 6 prób z opóźnieniem liniowym (~9 min z wewnętrznymi ponowieniami SDK)
+#   nie wystarczyło 11, 13 i 18.09.2026 — awarie 503 trwają dłużej.
+# Dlatego dwie niezależne warstwy (szczegóły w _call_gemini):
+# 1) dłuższe okno na model: opóźnienie wykładnicze 20/40/80/120/120 s
+#    (~6,5 min czekania na model podstawowy);
+# 2) model zapasowy GEMINI_FALLBACK_MODEL z własnym, krótszym oknem (~2,5 min)
+#    — przeciążenie zwykle dotyczy konkretnego modelu, nie całego API.
+# Najgorszy przypadek (oba etapy, oba modele) to ~18 min czekania plus czas
+# samych wywołań i wewnętrznych ponowień SDK — mieści się w timeout-minutes: 40
+# w workflow; przy zmianie tych liczb trzeba go przeliczyć. Na awarie
+# wielogodzinne i tak łapie drugi wpis cron 4:50 UTC (niezależny przebieg).
+CALL_MAX_ATTEMPTS = 6          # prób na model podstawowy
+CALL_RETRY_DELAY = 20          # bazowe opóźnienie (s) — rośnie wykładniczo…
+CALL_RETRY_MAX_DELAY = 120     # …do tego sufitu
+FALLBACK_MAX_ATTEMPTS = 4      # model zapasowy to "ostatnia szansa" — krócej
 
 # Błędy, które ma sens ponawiać: genai_errors.ServerError to zwykłe 5xx
 # z poprawną odpowiedzią HTTP. Ale 13.09.2026 połączenie padło w środku
@@ -186,24 +203,54 @@ CALL_RETRY_DELAY = 15
 RETRYABLE_ERRORS = (genai_errors.ServerError, httpx.TransportError)
 
 
-def _call_gemini(fn, label: str):
-    """Wywołuje fn() (wywołanie do client.models.generate_content) z retry
-    na przejściowe błędy serwera/sieci (RETRYABLE_ERRORS). Błędów klienta
-    (4xx — zła nazwa modelu, zły parametr) NIE ponawiamy, bo powtórka i tak
-    zwróci ten sam błąd — lepiej zawieść szybko z czytelnym komunikatem niż
-    czekać na próżno."""
-    for attempt in range(1, CALL_MAX_ATTEMPTS + 1):
-        try:
-            return fn()
-        except RETRYABLE_ERRORS as exc:
-            if attempt == CALL_MAX_ATTEMPTS:
-                raise
-            delay = CALL_RETRY_DELAY * attempt
+def _is_retryable(exc: Exception) -> bool:
+    """Oprócz RETRYABLE_ERRORS także 429 (limit zapytań darmowego poziomu):
+    to formalnie ClientError, ale w przeciwieństwie do pozostałych 4xx (zła
+    nazwa modelu, zły parametr) jest przejściowy i warto go przeczekać."""
+    if isinstance(exc, RETRYABLE_ERRORS):
+        return True
+    return isinstance(exc, genai_errors.ClientError) and getattr(exc, "code", None) == 429
+
+
+def _call_gemini(call_for, label: str):
+    """Wywołuje call_for(model) (wywołanie do client.models.generate_content)
+    z retry na błędy przejściowe (patrz _is_retryable). Innych błędów klienta
+    (4xx) NIE ponawiamy, bo powtórka i tak zwróci ten sam błąd — lepiej
+    zawieść szybko z czytelnym komunikatem niż czekać na próżno.
+
+    Odporność na długie 503 (uzasadnienie przy CALL_MAX_ATTEMPTS): opóźnienie
+    między próbami rośnie wykładniczo do CALL_RETRY_MAX_DELAY, a po
+    wyczerpaniu prób na modelu podstawowym cała procedura powtarza się na
+    modelu zapasowym GEMINI_FALLBACK_MODEL (jeśli ustawiony i inny).
+    """
+    models = [GEMINI_MODEL]
+    if GEMINI_FALLBACK_MODEL and GEMINI_FALLBACK_MODEL != GEMINI_MODEL:
+        models.append(GEMINI_FALLBACK_MODEL)
+
+    last_exc: Exception | None = None
+    for position, model in enumerate(models):
+        max_attempts = CALL_MAX_ATTEMPTS if position == 0 else FALLBACK_MAX_ATTEMPTS
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return call_for(model)
+            except Exception as exc:
+                if not _is_retryable(exc):
+                    raise
+                last_exc = exc
+                if attempt == max_attempts:
+                    break
+                delay = min(CALL_RETRY_DELAY * 2 ** (attempt - 1), CALL_RETRY_MAX_DELAY)
+                log.warning(
+                    f"{label}: przejściowy błąd modelu {model} ({type(exc).__name__}, "
+                    f"próba {attempt}/{max_attempts}): {exc}. Ponawiam za {delay}s."
+                )
+                time.sleep(delay)
+        if position + 1 < len(models):
             log.warning(
-                f"{label}: przejściowy błąd ({type(exc).__name__}, próba "
-                f"{attempt}/{CALL_MAX_ATTEMPTS}): {exc}. Ponawiam za {delay}s."
+                f"{label}: model {model} niedostępny po {max_attempts} próbach — "
+                f"przechodzę na model zapasowy {models[position + 1]}."
             )
-            time.sleep(delay)
+    raise last_exc
 
 
 # --------------------------------------------------------------------------
@@ -267,8 +314,8 @@ KANDYDACI:
     # model domyślnie może zużywać część budżetu na niewidoczne myślenie
     # (patrz komentarz przy THINKING_BUDGET), więc zostawiamy zapas.
     response = _call_gemini(
-        lambda: client.models.generate_content(
-            model=GEMINI_MODEL,
+        lambda model: client.models.generate_content(
+            model=model,
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=SELECT_SYSTEM_PROMPT,
@@ -285,6 +332,7 @@ KANDYDACI:
     usage1 = getattr(response, "usage_metadata", None)
     log.info(
         f"Etap 1: finish_reason={reason}, "
+        f"model={getattr(response, 'model_version', GEMINI_MODEL)}, "
         f"tokeny wy={getattr(usage1, 'candidates_token_count', '?')}, "
         f"we={getattr(usage1, 'prompt_token_count', '?')}, "
         f"myślenie={getattr(usage1, 'thoughts_token_count', '?')}"
@@ -413,8 +461,8 @@ def generate_markdown_report() -> str:
 
     log.info(f"Etap 2: piszę raport (model={GEMINI_MODEL})...")
     response = _call_gemini(
-        lambda: client.models.generate_content(
-            model=GEMINI_MODEL,
+        lambda model: client.models.generate_content(
+            model=model,
             contents=build_write_prompt(buckets),
             config=types.GenerateContentConfig(
                 system_instruction=WRITE_SYSTEM_PROMPT,
@@ -429,6 +477,7 @@ def generate_markdown_report() -> str:
     usage = getattr(response, "usage_metadata", None)
     log.info(
         f"Etap 2: finish_reason={reason}, "
+        f"model={getattr(response, 'model_version', GEMINI_MODEL)}, "
         f"tokeny wy={getattr(usage, 'candidates_token_count', '?')}, "
         f"we={getattr(usage, 'prompt_token_count', '?')}, "
         f"myślenie={getattr(usage, 'thoughts_token_count', '?')}"

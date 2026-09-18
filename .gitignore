@@ -5,3 +5,4 @@ __pycache__/
 logs/
 archive/
 .DS_Store
+.agent-projekt.yaml
