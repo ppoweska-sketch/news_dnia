@@ -3,13 +3,15 @@
 generate_report.py
 -------------------
 Codziennie (uruchamiane z GitHub Actions) generuje przegląd najważniejszych
-wiadomości (Polska/Świat x 5 kategorii x 5+5), renderuje mobile-first HTML
-i publikuje na GitHub Pages, nadpisując poprzednią wersję strony.
+wiadomości (Polska/Świat x 5 kategorii, docelowo 56 newsów — zobacz PER_BUCKET:
+"Biznes i giełda" ma 8 na region, resztą kategorii po 5), renderuje
+mobile-first HTML i publikuje na GitHub Pages, nadpisując poprzednią wersję
+strony.
 
 Zbieranie newsów: kanały RSS (rss_collect.py) zbierają ~900 kandydatów za
-darmo, dwuetapowo przez Gemini API — etap 1 wybiera z nich 50, etap 2 pisze
-raport z pełnych treści artykułów. Linki źródłowe pochodzą z RSS-a, więc nie
-da się ich zmyślić.
+darmo, dwuetapowo przez Gemini API — etap 1 wybiera z nich tyle, ile wynika
+z PER_BUCKET, etap 2 pisze raport z pełnych treści artykułów. Linki źródłowe
+pochodzą z RSS-a, więc nie da się ich zmyślić.
 
 Dostawca modelu: Google Gemini (nie Anthropic) — model Flash ma darmowy
 poziom wystarczający na dwa wywołania dziennie, więc codzienne uruchomienie
@@ -117,8 +119,20 @@ def polish_date(dt: datetime) -> str:
 # Kolejność sekcji w raporcie. Używane przez oba tryby zbierania newsów.
 CATEGORIES = ["Ogólne wydarzenia", "Polityka", "Biznes i giełda", "Sport", "Nauka"]
 REGIONS = ["Polska", "Świat"]
-PER_BUCKET = 5          # ile newsów na (kategoria, region)
-MIN_PER_BUCKET = 3      # poniżej tego uznajemy raport za wybrakowany
+
+# Ile newsów na (kategoria, region). Domyślnie 5 — "Biznes i giełda" ma więcej
+# na wyraźną prośbę użytkownika (08.10.2026). Słownik, nie płaska liczba,
+# właśnie dlatego: trzeba dać JEDNEJ kategorii inną wartość bez zmiany
+# pozostałych czterech.
+DEFAULT_PER_BUCKET = 5
+PER_BUCKET: dict[str, int] = {"Biznes i giełda": 8}
+
+
+def per_bucket(category: str) -> int:
+    return PER_BUCKET.get(category, DEFAULT_PER_BUCKET)
+
+
+MIN_PER_BUCKET = 3      # poniżej tego uznajemy sekcję za wybrakowaną (każda sekcja, ten sam próg)
 
 # W GitHub Actions repo jest już sklonowane i uwierzytelnione przez
 # actions/checkout, więc nie potrzebujemy ani tokena, ani ownera/repo —
@@ -292,11 +306,16 @@ def select_news(client, candidates) -> dict[tuple[str, str], list]:
     """Etap 1 — model wybiera newsy i rozkłada je na (kategoria, region)."""
     from rss_collect import candidates_digest
 
-    wanted = len(CATEGORIES) * len(REGIONS) * PER_BUCKET
+    wanted = sum(per_bucket(cat) for cat in CATEGORIES) * len(REGIONS)
+    category_counts = "\n".join(
+        f"- {cat}: {per_bucket(cat)} na region ({per_bucket(cat) * len(REGIONS)} łącznie)"
+        for cat in CATEGORIES
+    )
     prompt = f"""Dzisiejsza data: {polish_date(datetime.now())}.
 
-Poniżej {len(candidates)} kandydatów na newsy. Wybierz dokładnie \
-{PER_BUCKET} do każdej pary (sekcja, region) — razem {wanted} newsów.
+Poniżej {len(candidates)} kandydatów na newsy. Wybierz newsy dla każdej pary \
+(sekcja, region) w podanej liczbie — razem {wanted} newsów:
+{category_counts}
 
 Sekcje: {", ".join(CATEGORIES)}
 Regiony: {", ".join(REGIONS)}
@@ -371,7 +390,7 @@ KANDYDACI:
         # Regionu nie weryfikujemy względem kanału: źródła są polskojęzyczne,
         # więc "Polska"/"Świat" wynika z treści newsa, a nie z tego, skąd pochodzi.
         bucket = buckets[(pick.category, pick.region)]
-        if len(bucket) >= PER_BUCKET:
+        if len(bucket) >= per_bucket(pick.category):
             continue
         bucket.append(cand)
         used.add(pick.idx)
@@ -385,10 +404,10 @@ KANDYDACI:
         )
 
     total = sum(len(v) for v in buckets.values())
-    short = [f"{cat}/{reg} ({len(v)})" for (cat, reg), v in buckets.items()
-             if len(v) < PER_BUCKET]
+    short = [f"{cat}/{reg} ({len(v)}/{per_bucket(cat)})" for (cat, reg), v in buckets.items()
+             if len(v) < per_bucket(cat)]
     if short:
-        log.warning(f"Sekcje poniżej {PER_BUCKET} newsów: {', '.join(short)}")
+        log.warning(f"Sekcje poniżej celu: {', '.join(short)}")
     log.info(f"Etap 1: wybrano {total} newsów.")
     return buckets
 

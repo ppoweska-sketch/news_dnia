@@ -179,9 +179,12 @@ def collect_candidates(max_age_hours: int = 36, per_feed_cap: int = 25) -> list[
         f"(odrzucono {skipped_old} starszych niż {max_age_hours}h, "
         f"{skipped_dup} duplikatów)"
     )
-    if len(candidates) < 60:
+    # Próg 70 (nie 60) od 08.10.2026: cel raportu wzrósł z 50 do 56 newsów
+    # (więcej w sekcji "Biznes i giełda"), więc margines bezpieczeństwa nad
+    # celem podniesiony proporcjonalnie, żeby zostało tyle samo zapasu co wcześniej.
+    if len(candidates) < 70:
         raise RuntimeError(
-            f"Za mało kandydatów ({len(candidates)}) na raport z 50 newsów."
+            f"Za mało kandydatów ({len(candidates)}) na raport z 56 newsów."
         )
     return candidates
 

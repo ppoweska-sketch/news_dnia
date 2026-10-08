@@ -7,8 +7,11 @@ weekendami), przez **GitHub Actions** — zero własnej maszyny, zero PAT-a,
 zero utrzymania, zero opłat
 (publiczne repo + darmowy poziom Gemini Flash).
 
-5 sekcji × Polska/Świat × 5 newsów = 50 newsów dziennie. Sekcje: Ogólne
-wydarzenia, Polityka, Biznes i giełda, Sport, Nauka.
+5 sekcji × Polska/Świat, **56 newsów dziennie** (zmienione 08.10.2026): Ogólne
+wydarzenia, Polityka, Sport, Nauka po 5 na region (10 łącznie), **Biznes
+i giełda 8 na region (16 łącznie)** — więcej kontekstu rynkowego/gospodarczego
+na wyraźną prośbę użytkownika. Liczby ustawia `PER_BUCKET` w
+`generate_report.py`.
 
 ---
 
