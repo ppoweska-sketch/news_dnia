@@ -1,4 +1,10 @@
-google-genai>=1.0.0
+# Górna granica <4.0.0 dodana 19.11.2026: "1.0.0" bez sufitu pozwoliło CI
+# zainstalować 3.x, co po cichu zmieniło zależność HTTP z httpx na httpx2
+# (osobny pakiet) i wywaliło ponawianie błędów sieciowych bez żadnego
+# ostrzeżenia — zobacz RETRYABLE_ERRORS w generate_report.py. Przy
+# następnym realnym skoku wersji major, podnieś sufit świadomie, po
+# przeczytaniu changelogu, nie przez usunięcie tego ograniczenia.
+google-genai>=1.0.0,<4.0.0
 httpx>=0.27.0
 pydantic>=2.0.0
 python-dotenv>=1.0.0

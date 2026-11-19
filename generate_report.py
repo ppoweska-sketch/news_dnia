@@ -214,7 +214,23 @@ FALLBACK_MAX_ATTEMPTS = 4      # model zapasowy to "ostatnia szansa" — krócej
 # żadnej odpowiedzi HTTP do sklasyfikowania. httpx.TransportError to
 # wspólna klasa bazowa dla tej i pokrewnych awarii sieciowych (timeouty,
 # zerwane połączenie) — tak samo przejściowych jak 5xx, więc też ponawiamy.
-RETRYABLE_ERRORS = (genai_errors.ServerError, httpx.TransportError)
+#
+# 19.11.2026: ten sam wyjątek (RemoteProtocolError) poleciał NIEZŁAPANY
+# mimo powyższego — bo google-genai 3.x (requirements.txt ma ">=1.0.0"
+# bez górnej granicy, CI zawsze instaluje najnowszą) zmienił domyślną
+# zależność HTTP z httpx na httpx2 — osobny pakiet PyPI, nie podklasa.
+# httpx2.TransportError ma identyczną hierarchię jak httpx.TransportError
+# (zweryfikowane: ConnectError/Timeout/RemoteProtocolError/NetworkError —
+# wszystkie podklasy), ale isinstance() na nim nie łapał starego sprawdzenia.
+# httpx2 bywa niezainstalowany (środowiska ze starszym google-genai <3.0
+# wciąż używają samego httpx) — import jest więc opcjonalny.
+try:
+    import httpx2
+    _TRANSPORT_ERRORS = (httpx.TransportError, httpx2.TransportError)
+except ImportError:
+    _TRANSPORT_ERRORS = (httpx.TransportError,)
+
+RETRYABLE_ERRORS = (genai_errors.ServerError, *_TRANSPORT_ERRORS)
 
 
 def _is_retryable(exc: Exception) -> bool:
